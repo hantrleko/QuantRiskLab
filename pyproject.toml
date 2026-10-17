@@ -1,0 +1,31 @@
+[project]
+name = "quantrisklab"
+version = "0.1.0"
+description = "公开金融数据上的量化研究与风险可视化"
+readme = "README.md"
+authors = [
+    { name = "hantrleko", email = "yuchenhan2023@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.1",
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "numpy>=2",
+    "pandas>=2.2",
+    "polars>=1.0",
+    "pyarrow>=17",
+    "pytest>=8",
+    "statsmodels>=0.14",
+    "uvicorn>=0.32",
+]
+
+[project.scripts]
+quantrisklab = "quantrisklab:main"
+
+[build-system]
+requires = ["uv_build>=0.10.7,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

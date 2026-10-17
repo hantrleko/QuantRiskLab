@@ -1,0 +1,245 @@
+{
+  "as_of": "2026-10-13",
+  "series": [
+    {
+      "series_id": "BAMLC0A0CM",
+      "title_zh": "美国公司债 OAS",
+      "source": "fred",
+      "frequency": "Daily, Close",
+      "n_visible": 785,
+      "start": "2023-10-10",
+      "end": "2026-10-08",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": false
+    },
+    {
+      "series_id": "CPIAUCSL",
+      "title_zh": "美国 CPI（季调）",
+      "source": "alfred",
+      "frequency": "Monthly",
+      "n_visible": 139,
+      "start": "2015-01-01",
+      "end": "2026-08-01",
+      "stale": false,
+      "revised_observations": 131,
+      "price_metrics": false
+    },
+    {
+      "series_id": "DCOILWTICO",
+      "title_zh": "WTI 原油现货价格",
+      "source": "fred",
+      "frequency": "Daily",
+      "n_visible": 4150,
+      "start": "2010-01-04",
+      "end": "2026-10-06",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": true
+    },
+    {
+      "series_id": "DFF",
+      "title_zh": "有效联邦基金利率",
+      "source": "fred",
+      "frequency": "Daily, 7-Day",
+      "n_visible": 6125,
+      "start": "2010-01-01",
+      "end": "2026-10-08",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": false
+    },
+    {
+      "series_id": "DGS10",
+      "title_zh": "10年期美国国债收益率",
+      "source": "fred",
+      "frequency": "Daily",
+      "n_visible": 4195,
+      "start": "2010-01-04",
+      "end": "2026-10-08",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": false
+    },
+    {
+      "series_id": "DGS2",
+      "title_zh": "2年期美国国债收益率",
+      "source": "fred",
+      "frequency": "Daily",
+      "n_visible": 4195,
+      "start": "2010-01-04",
+      "end": "2026-10-08",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": false
+    },
+    {
+      "series_id": "SP500",
+      "title_zh": "标普500价格指数",
+      "source": "fred",
+      "frequency": "Daily, Close",
+      "n_visible": 2512,
+      "start": "2016-10-13",
+      "end": "2026-10-12",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": true
+    },
+    {
+      "series_id": "T10Y2Y",
+      "title_zh": "10年减2年国债利差",
+      "source": "fred",
+      "frequency": "Daily",
+      "n_visible": 4196,
+      "start": "2010-01-04",
+      "end": "2026-10-09",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": false
+    },
+    {
+      "series_id": "VIXCLS",
+      "title_zh": "VIX 波动率指数",
+      "source": "fred",
+      "frequency": "Daily, Close",
+      "n_visible": 4251,
+      "start": "2010-01-04",
+      "end": "2026-10-09",
+      "stale": false,
+      "revised_observations": 0,
+      "price_metrics": false
+    }
+  ],
+  "failures": [
+    {
+      "source": "fred",
+      "series_id": "GOLDAMGBD228NLBM",
+      "url": "https://api.stlouisfed.org/fred/series/observations?series_id=GOLDAMGBD228NLBM&file_type=json&observation_start=2010-01-01&observation_end=2026-10-13",
+      "http_status": 400,
+      "error": "Bad Request.  The series does not exist."
+    },
+    {
+      "source": "alfred",
+      "series_id": "UNRATE",
+      "url": "https://api.stlouisfed.org/fred/series",
+      "http_status": 0,
+      "error": "UNRATE HTTP 0: curl: (28) Operation timed out after 90015 milliseconds with 0 bytes received\r\n"
+    },
+    {
+      "source": "fred",
+      "series_id": "GOLDPMGBD228NLBM",
+      "url": "https://api.stlouisfed.org/fred/series?series_id=GOLDPMGBD228NLBM&file_type=json",
+      "http_status": null,
+      "error": "没有本地文件。不再重试。"
+    }
+  ],
+  "metrics": [
+    {
+      "eligible": true,
+      "reason": null,
+      "sample_start": "2010-01-04",
+      "sample_end": "2026-10-06",
+      "n_prices": 4150,
+      "n_returns": 4147,
+      "return_definition": "相邻可得价格的简单收益。缺失日不填成零收益。不含费用、滑点或股息再投资。 样本含非正价格。非正价格及其下一期不计算简单收益，因此不进入 VaR。价格比回撤仍使用该价格，可以低于 -100%。",
+      "realized_vol_window": 63,
+      "realized_vol": 0.6372745689258764,
+      "realized_vol_error": null,
+      "vol_annualization": 252,
+      "max_drawdown": -1.3271697779350615,
+      "var_alpha": 0.05,
+      "var": -0.037115515602928036,
+      "expected_shortfall": -0.05977155618786955,
+      "var_01": -0.06780924653560019,
+      "expected_shortfall_01": -0.10525777198383383,
+      "sign_convention": "return_quantile",
+      "loss_var": 0.037115515602928036,
+      "loss_expected_shortfall": 0.05977155618786955,
+      "ljung_box_lags": 10,
+      "ljung_box_pvalue": 9.530011513606007e-11,
+      "ljung_box_note": "Ljung-Box 检验收益自相关，只是描述统计，不是交易信号。",
+      "series_id": "DCOILWTICO"
+    },
+    {
+      "eligible": true,
+      "reason": null,
+      "sample_start": "2016-10-13",
+      "sample_end": "2026-10-12",
+      "n_prices": 2512,
+      "n_returns": 2511,
+      "return_definition": "相邻可得价格的简单收益。缺失日不填成零收益。不含费用、滑点或股息再投资。",
+      "realized_vol_window": 63,
+      "realized_vol": 0.10949025351636396,
+      "realized_vol_error": null,
+      "vol_annualization": 252,
+      "max_drawdown": -0.3392495902426059,
+      "var_alpha": 0.05,
+      "var": -0.01653428912796423,
+      "expected_shortfall": -0.0275267176865151,
+      "var_01": -0.03282895409477162,
+      "expected_shortfall_01": -0.04753550827175169,
+      "sign_convention": "return_quantile",
+      "loss_var": 0.01653428912796423,
+      "loss_expected_shortfall": 0.0275267176865151,
+      "ljung_box_lags": 10,
+      "ljung_box_pvalue": 1.74801165772983e-49,
+      "ljung_box_note": "Ljung-Box 检验收益自相关，只是描述统计，不是交易信号。",
+      "series_id": "SP500"
+    }
+  ],
+  "fixtures": {
+    "alfred": "CPIAUCSL dates=3 rows=18",
+    "price": "DCOILWTICO rows=500",
+    "cftc": "rows=24",
+    "missing": "BAMLC0A0CM"
+  },
+  "integrity_problems": [],
+  "backtest": "未做。没有可交易全收益、费用、期货展期和成交假设，不能报告策略收益。",
+  "charts": [
+    {
+      "chart": "宏观收益率折线",
+      "series": [
+        "DGS2",
+        "DGS10",
+        "DFF",
+        "T10Y2Y"
+      ]
+    },
+    {
+      "chart": "滚动相关矩阵",
+      "price_series": [
+        "DCOILWTICO",
+        "SP500"
+      ],
+      "level_series": [
+        "DFF",
+        "DGS10",
+        "DGS2",
+        "BAMLC0A0CM",
+        "T10Y2Y"
+      ]
+    },
+    {
+      "chart": "风险热力图",
+      "price_vol": [
+        "DCOILWTICO",
+        "SP500"
+      ],
+      "level_scale": [
+        "DFF",
+        "DGS10",
+        "DGS2"
+      ]
+    },
+    {
+      "chart": "CFTC 净持仓",
+      "source": "cftc"
+    },
+    {
+      "chart": "ALFRED 时点对比",
+      "series": [
+        "CPIAUCSL"
+      ]
+    }
+  ]
+}

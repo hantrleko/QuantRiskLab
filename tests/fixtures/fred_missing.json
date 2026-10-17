@@ -1,0 +1,57 @@
+{
+  "source_url": "https://api.stlouisfed.org/fred/series/observations?series_id=BAMLC0A0CM&file_type=json",
+  "access_date": "2026-10-13",
+  "series_id": "BAMLC0A0CM",
+  "source_file": "data/raw/fred/BAMLC0A0CM.observations.offset0.json",
+  "note": "从真实 FRED 响应摘出的缺失值与数值，不是合成数据。",
+  "observations": [
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2023-12-25",
+      "value": "."
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2024-01-01",
+      "value": "."
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2024-03-29",
+      "value": "."
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2023-10-10",
+      "value": "1.29"
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2023-10-11",
+      "value": "1.27"
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2023-10-12",
+      "value": "1.26"
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2023-10-13",
+      "value": "1.27"
+    },
+    {
+      "realtime_start": "2026-10-13",
+      "realtime_end": "2026-10-13",
+      "date": "2023-10-16",
+      "value": "1.27"
+    }
+  ]
+}

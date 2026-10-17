@@ -1,0 +1,6 @@
+{
+  "source_url": "https://www.cftc.gov/files/dea/history/",
+  "access_date": "2026-10-13",
+  "note": "真实 COT 持仓摘录。release_date 按文档化的周五规则推算，不是文件字段。",
+  "rows": 24
+}

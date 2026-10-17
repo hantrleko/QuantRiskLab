@@ -1,0 +1,29 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Raw downloads, columnar cache, database, logs
+data/raw/
+data/parquet/
+data/*.duckdb
+!data/quantrisklab.duckdb
+data/*.duckdb.wal
+data/*.json
+logs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

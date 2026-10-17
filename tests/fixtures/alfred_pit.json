@@ -1,0 +1,11 @@
+{
+  "source_url": "https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&file_type=json&observation_start=2015-01-01&observation_end=2026-10-13",
+  "access_date": "2026-10-13",
+  "series_id": "CPIAUCSL",
+  "excerpt_dates": [
+    "2015-01-01",
+    "2015-02-01",
+    "2015-03-01"
+  ],
+  "note": "真实 ALFRED vintage 摘录，不是合成数据。同一观测月的不同 value 来自不同 release_date。"
+}
