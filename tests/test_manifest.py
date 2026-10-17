@@ -4,6 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 from quantrisklab.paths import MANIFEST_JSON, ROOT
 from quantrisklab.sources.http_util import sha256_bytes, sha256_file
 

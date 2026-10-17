@@ -22,6 +22,7 @@ data/*.duckdb
 data/*.duckdb.wal
 data/*.json
 logs/
+data/experiments/
 
 # Frontend
 frontend/node_modules/

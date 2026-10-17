@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from quantrisklab.sources.calendar import cftc_release_date as calendar_release_date
 from quantrisklab.sources.cftc import cftc_release_date
 
 # Checked against the CFTC 2026 release calendar. Starred dates are delayed.
@@ -21,6 +22,13 @@ def test_official_2026_release_dates():
         assert observation.weekday() == 1
         assert cftc_release_date(observation) == release
         assert release > observation
+
+
+def test_calendar_module_uses_the_delayed_official_rule():
+    delayed = date(2026, 6, 16)
+    assert calendar_release_date(delayed) == date(2026, 6, 22)
+    assert calendar_release_date(delayed) == cftc_release_date(delayed)
+    assert calendar_release_date(delayed) > date(2026, 6, 19)
 
 
 def test_observation_tuesday_is_not_the_release_date():

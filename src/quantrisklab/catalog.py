@@ -49,7 +49,11 @@ FRED_SLOTS: list[dict] = [
         "price_metrics": False,
         "prefer_fresh": False,
         "observation_start": "2010-01-01",
-        "release_rule": SAME_DAY + " 纽约联储有效联邦基金利率，按观测日公布。",
+        "release_rule": (
+            "库内 release_date 仍等于观测日，这是日级近似。"
+            "纽约联储是在下一营业日上午约 9:00（美东）公布前一营业日的有效联邦基金利率。"
+            "精确的历史发布时间没有逐条回填。"
+        ),
         "notes": YIELD_NOTE,
     },
     {

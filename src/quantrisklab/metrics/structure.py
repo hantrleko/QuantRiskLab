@@ -80,8 +80,52 @@ def distinct_threshold_episodes(
     return episodes
 
 
+def _block_bootstrap_interval(flags: np.ndarray, block: int, reps: int, seed: int) -> list[float] | None:
+    clean = np.asarray(flags, dtype=float)
+    if clean.size < block * 4:
+        return None
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(clean.size / block))
+    starts = rng.integers(0, clean.size - block + 1, size=(reps, n_blocks))
+    samples = np.empty(reps, dtype=float)
+    for index, row in enumerate(starts):
+        draw = np.concatenate([clean[start : start + block] for start in row])[: clean.size]
+        samples[index] = draw.mean()
+    low, high = np.quantile(samples, [0.025, 0.975])
+    return [float(low), float(high)]
+
+
+def cluster_similar_dates(stamps: list[pd.Timestamp], distances: dict[pd.Timestamp, float], horizon_days: int) -> list[dict]:
+    """Cluster hits in time order. Distance order must not decide which dates merge."""
+    clusters: list[dict] = []
+    for stamp in sorted(pd.Timestamp(item) for item in stamps):
+        distance = float(distances[stamp])
+        if not clusters or (stamp - clusters[-1]["end"]).days > horizon_days:
+            clusters.append(
+                {
+                    "date": _iso(stamp),
+                    "end": stamp,
+                    "distance": distance,
+                    "cluster_size": 1,
+                }
+            )
+            continue
+        clusters[-1]["end"] = stamp
+        clusters[-1]["cluster_size"] += 1
+        if distance < clusters[-1]["distance"]:
+            clusters[-1]["date"] = _iso(stamp)
+            clusters[-1]["distance"] = distance
+    for cluster in clusters:
+        cluster.pop("end", None)
+    return clusters
+
+
 def lower_tail_dependence(left: pd.Series, right: pd.Series, alpha: float = TAIL_ALPHA) -> dict:
-    """Empirical lower-tail co-exceedance λ = P(X<qα, Y<qα) / α."""
+    """Two different tail summaries. They do not share an independence benchmark.
+
+    coexceedance = P(X<=qX, Y<=qY) / alpha. Under independence this is about alpha, not 1.
+    lift = P(A and B) / (P(A)P(B)). Under independence this is about 1.
+    """
     if not 0 < alpha < 0.5:
         raise ValueError("alpha 必须在 (0, 0.5) 内")
     paired = pd.concat([left.rename("left"), right.rename("right")], axis=1).dropna()
@@ -89,15 +133,32 @@ def lower_tail_dependence(left: pd.Series, right: pd.Series, alpha: float = TAIL
         return {"eligible": False, "reason": "尾部相关的重叠样本少于 40", "n": int(len(paired))}
     left_q = float(np.quantile(paired["left"], alpha))
     right_q = float(np.quantile(paired["right"], alpha))
-    both = (paired["left"] <= left_q) & (paired["right"] <= right_q)
+    left_tail = paired["left"] <= left_q
+    right_tail = paired["right"] <= right_q
+    both = left_tail & right_tail
+    joint = float(both.mean())
+    p_left = float(left_tail.mean())
+    p_right = float(right_tail.mean())
+    lift = None if p_left * p_right == 0 else joint / (p_left * p_right)
+    ci = _block_bootstrap_interval(both.to_numpy(dtype=float), block=21, reps=200, seed=13)
     return {
         "eligible": True,
         "reason": None,
         "alpha": alpha,
         "n": int(len(paired)),
-        "lambda": float(both.mean() / alpha),
+        "n_joint_tail": int(both.sum()),
+        "joint_probability": joint,
+        "joint_probability_ci95": ci,
+        "marginal_left": p_left,
+        "marginal_right": p_right,
+        "coexceedance": joint / alpha,
+        "independence_coexceedance": alpha,
+        "lift": lift,
+        "independence_lift": 1.0,
         "left_quantile": left_q,
         "right_quantile": right_q,
+        "formula_coexceedance": "P(X<=qX, Y<=qY) / alpha",
+        "formula_lift": "P(A and B) / (P(A) P(B))",
     }
 
 
@@ -138,7 +199,17 @@ def correlation_network(frame: pd.DataFrame, labels: dict[str, str], threshold: 
                 continue
             degree[left] += 1
             degree[right] += 1
-            links.append({"source": left, "target": right, "value": float(value)})
+            mechanical_ids = {"dgs10_change", "dgs2_change", "curve_change"}
+            mechanical = {left, right} <= mechanical_ids and "curve_change" in {left, right}
+            links.append(
+                {
+                    "source": left,
+                    "target": right,
+                    "value": float(value),
+                    "mechanical": mechanical,
+                    "interpretation": "会计关系，不是独立风险传导" if mechanical else "样本相关，不是因果传染",
+                }
+            )
     for column in columns:
         nodes.append({"id": column, "name": labels.get(column, column), "degree": degree[column]})
     return {
@@ -148,6 +219,7 @@ def correlation_network(frame: pd.DataFrame, labels: dict[str, str], threshold: 
         "n": int(len(frame)),
         "nodes": nodes,
         "links": links,
+        "caveat": "边是样本相关系数，不是因果传染。10年减2年利差与两个国债收益率之间的边含会计恒等式 T10Y2Y = DGS10 - DGS2。",
     }
 
 
@@ -173,14 +245,20 @@ def _window_change(levels: pd.DataFrame, start: date, end: date) -> float | None
     return float(part["value"].iloc[-1] - part["value"].iloc[0])
 
 
-def _window_return(levels: pd.DataFrame, start: date, end: date) -> float | None:
+def _window_return(levels: pd.DataFrame, start: date, end: date) -> dict:
     part = levels[(levels["observation_date"] >= pd.Timestamp(start)) & (levels["observation_date"] <= pd.Timestamp(end))]
     if len(part) < 2:
-        return None
+        return {"value": None, "status": "insufficient", "reason": "窗口内价格不足两期"}
+    if bool((part["value"] <= 0).any()):
+        return {
+            "value": None,
+            "status": "not_computable",
+            "reason": "窗口含非正价格。简单收益复合会跳过这些日期，因此不报告复合收益。",
+        }
     returns = simple_returns(part["value"]).dropna()
     if returns.empty:
-        return None
-    return float((1.0 + returns).prod() - 1.0)
+        return {"value": None, "status": "not_computable", "reason": "没有有效的简单收益"}
+    return {"value": float((1.0 + returns).prod() - 1.0), "status": "simple_compound", "reason": None}
 
 
 def _titles(connection) -> dict[str, str]:
@@ -198,6 +276,8 @@ def _variance_regime(changes: pd.Series) -> dict:
     A two-state Markov MLE on this Treasury sample did not return inside an
     interactive request, so it is not reported as a smoothed probability.
     """
+    if changes.empty or not isinstance(changes.index, pd.DatetimeIndex):
+        return {"eligible": False, "reason": "没有足够的利率变动来划分方差状态", "method": "rolling_variance_median"}
     weekly = changes.dropna().resample("W-FRI").sum()
     weekly = weekly.replace([np.inf, -np.inf], np.nan).dropna()
     roll = weekly.rolling(12).var()
@@ -260,18 +340,19 @@ def _similar_episodes(features: pd.DataFrame, as_of: date, horizon: int) -> dict
     nearest = []
     for stamp, value in ranked.head(8).items():
         nearest.append({"date": _iso(stamp), "distance": float(value)})
-    close_dates = [pd.Timestamp(item) for item in ranked.index[ranked <= SIMILAR_DISTANCE]]
-    episodes = []
-    for stamp in close_dates:
-        if not episodes or (stamp - episodes[-1]).days > horizon:
-            episodes.append(stamp)
+    close = distance[distance <= SIMILAR_DISTANCE].sort_index()
+    clusters = cluster_similar_dates(list(close.index), {pd.Timestamp(stamp): float(value) for stamp, value in close.items()}, horizon)
     return {
         "eligible": True,
         "reason": None,
-        "distance_rule": f"历史均值和标准差只用来自当前窗口之前的状态。距离是标准化特征的均方根，阈值 {SIMILAR_DISTANCE}。相距 {horizon} 天以内的命中并成一次。",
+        "distance_rule": (
+            f"历史均值和标准差只用来自当前窗口之前的状态。距离是标准化特征的均方根，阈值 {SIMILAR_DISTANCE}。"
+            f"先按时间升序，再把间隔不超过 {horizon} 天的命中并成一组，每组保留距离最小的日期。"
+        ),
         "current_date": _iso(current_date),
         "current": {column: float(current[column]) for column in valid},
-        "count": len(episodes),
+        "count": len(clusters),
+        "representatives": clusters,
         "nearest": nearest,
         "caveat": "距离近只说明这几个描述统计接近，不说明宏观机制相同。",
     }
@@ -288,8 +369,13 @@ def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
         end = date.fromisoformat(episode["end"])
         episode["dgs2_change"] = _window_change(levels["DGS2"], start, end)
         episode["vix_change"] = _window_change(levels["VIXCLS"], start, end)
-        episode["sp500_return"] = _window_return(levels["SP500"], start, end)
-        episode["wti_return"] = _window_return(levels["DCOILWTICO"], start, end)
+        sp_return = _window_return(levels["SP500"], start, end)
+        wti_return = _window_return(levels["DCOILWTICO"], start, end)
+        episode["sp500_return"] = sp_return["value"]
+        episode["sp500_return_status"] = sp_return["status"]
+        episode["wti_return"] = wti_return["value"]
+        episode["wti_return_status"] = wti_return["status"]
+        episode["wti_return_reason"] = wti_return["reason"]
         episode["credit_change"] = _window_change(levels["BAMLC0A0CM"], start, end)
 
     panel = _feature_panel(levels, window)
@@ -381,7 +467,12 @@ def _tails(panel: pd.DataFrame) -> dict:
     return {
         "sp500_wti_lower": {
             **equity_oil,
-            "note": "标普 500 与 WTI 简单收益同时落入各自 5% 下尾的概率，再除以 0.05。1 表示与独立同边际大致相当的下尾共现，更高表示下尾更常一起出现。",
+            "note": (
+                "coexceedance = P(两者都落入各自 5% 分位)/0.05。相互独立时它大约等于 0.05，不是 1。"
+                "lift = 联合概率/(两个边际概率之积)。相互独立时 lift 大约等于 1。"
+                "完全同步的连续变量，coexceedance 接近 1，lift 接近 1/0.05。"
+                "区间是时间分块 bootstrap 的 95% 分位，不是因果区间。"
+            ),
         },
         "fast_rate_and_equity_loss": {
             **rate_equity,
@@ -405,8 +496,9 @@ def _crises(levels: dict[str, pd.DataFrame], as_of: date) -> dict:
                 "partial": end < spec["end"],
                 "dgs10_change": _window_change(levels["DGS10"], spec["start"], end),
                 "vix_change": _window_change(levels["VIXCLS"], spec["start"], end),
-                "sp500_return": _window_return(levels["SP500"], spec["start"], end),
-                "wti_return": _window_return(levels["DCOILWTICO"], spec["start"], end),
+                "sp500_return": _window_return(levels["SP500"], spec["start"], end)["value"],
+                "wti_return": _window_return(levels["DCOILWTICO"], spec["start"], end)["value"],
+                "wti_return_status": _window_return(levels["DCOILWTICO"], spec["start"], end)["status"],
             }
         )
     return {

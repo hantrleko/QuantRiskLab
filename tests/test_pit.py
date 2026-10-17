@@ -4,8 +4,11 @@ from datetime import timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from quantrisklab.paths import PARQUET_DIR
+
+pytestmark = pytest.mark.integration
 from quantrisklab.store.pit import latest_vintage
 
 ROOT = Path(__file__).resolve().parents[1]

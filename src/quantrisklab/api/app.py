@@ -28,7 +28,9 @@ from quantrisklab.api.queries import (
     vintage_dates,
 )
 from quantrisklab.logging_setup import setup_logging
+from quantrisklab.pit_clock import availability_catalog, snapshot_status
 from quantrisklab.metrics.structure import structure_payload
+from quantrisklab.studio import compare_windows, explore_pair, replay_track, save_experiment, tail_laboratory
 from quantrisklab.paths import DB_PATH, FAILURES_JSON, ROOT
 from quantrisklab.quality.checks import build_quality_report
 from quantrisklab.sources.bis import BisSdmxClient
@@ -244,6 +246,81 @@ def structure(
     finally:
         connection.close()
     return sanitize(payload)
+
+
+@app.get("/api/availability")
+def availability() -> dict:
+    return availability_catalog()
+
+
+@app.get("/api/snapshot")
+def snapshot() -> dict:
+    return snapshot_status()
+
+
+@app.get("/api/replay")
+def replay(as_of: str | None = None, window: int = Query(default=63, ge=21, le=252)) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = replay_track(connection, day, window)
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/explore")
+def explore(
+    left: str = "SP500",
+    right: str = "DCOILWTICO",
+    as_of: str | None = None,
+    window: int = Query(default=63, ge=20, le=756),
+) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = explore_pair(connection, day, left, right, window)
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/tails")
+def tails(
+    left: str = "SP500",
+    right: str = "DCOILWTICO",
+    as_of: str | None = None,
+    alpha: float = Query(default=0.05, gt=0, lt=0.5),
+) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = tail_laboratory(connection, day, left, right, alpha)
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/compare")
+def compare(as_of: str | None = None, windows: str = "taper,covid,hike2022") -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = compare_windows(connection, day, [item for item in windows.split(",") if item])
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.post("/api/experiments")
+def experiments(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="实验记录必须是对象")
+    return save_experiment(payload)
 
 
 _DIST = ROOT / "frontend" / "dist"

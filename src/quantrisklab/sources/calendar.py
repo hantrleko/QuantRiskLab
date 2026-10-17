@@ -1,8 +1,8 @@
-"""CFTC 公布日规则与美国联邦假日。
+"""CFTC 公布日与美国联邦假日。
 
-文件里的 As of Date 是仓位观测日（通常为周二），不是公布日。
-CFTC 常规在同一周周五美东 15:30 公布。若该周五为联邦假日，则提前到前一个工作日。
-这是文档化规则，不是文件内字段。Good Friday 等非联邦假日未计入。
+发布日只使用 sources/cftc.py 的规则，并与 CFTC 年度官方日历对照。
+常规是同周周五美东 15:30。若周三、周四或周五是美国联邦假日，发布日顺延到下一营业日，
+而不是提前到周四。Good Friday 等非联邦假日未计入。
 """
 
 from __future__ import annotations
@@ -58,17 +58,10 @@ def holiday_set(around: date) -> set[date]:
 
 
 def cftc_release_date(observation_date: date) -> date:
-    """观测日所在周的周五；遇联邦假日或周末则向前移到工作日。"""
-    friday = observation_date + timedelta(days=(4 - observation_date.weekday()) % 7)
-    if friday <= observation_date:
-        friday += timedelta(days=7)
-    holidays = holiday_set(friday)
-    release = friday
-    for _ in range(5):
-        if release.weekday() < 5 and release not in holidays:
-            return release
-        release -= timedelta(days=1)
-    return release
+    """与 cftc.py 同一实现。节假日导致的延迟向后顺延，不提前。"""
+    from quantrisklab.sources.cftc import cftc_release_date as official_release_date
+
+    return official_release_date(observation_date)
 
 
-RELEASE_RULE = "cftc_same_week_friday_1530ET_prior_business_day_if_federal_holiday"
+RELEASE_RULE = "cftc_same_week_friday_1530ET_next_business_day_if_wed_thu_fri_federal_holiday"

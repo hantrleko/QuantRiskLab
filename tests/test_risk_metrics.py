@@ -3,8 +3,11 @@
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from quantrisklab.metrics.risk import summarize_level
+
+pytestmark = pytest.mark.integration
 from quantrisklab.paths import PARQUET_DIR
 
 ROOT = Path(__file__).resolve().parents[1]

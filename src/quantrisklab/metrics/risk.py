@@ -117,7 +117,7 @@ def summarize_price(frame: pl.DataFrame, window: int, alpha: float) -> dict:
         "return_definition": (
             "相邻可得价格的简单收益。缺失日不填成零收益。不含费用、滑点或股息再投资。"
             + (
-                " 样本含非正价格。非正价格及其下一期不计算简单收益，因此不进入 VaR。价格比回撤仍使用该价格，可以低于 -100%。"
+                " 样本含非正价格。非正价格及其下一期不计算简单收益，因此不进入 VaR。百分比回撤不计算。"
                 if bool((pdf["value"] <= 0).any())
                 else ""
             )
@@ -126,7 +126,14 @@ def summarize_price(frame: pl.DataFrame, window: int, alpha: float) -> dict:
         "realized_vol": vol,
         "realized_vol_error": vol_error,
         "vol_annualization": 252,
-        "max_drawdown": max_drawdown(pdf["value"].to_numpy()),
+        "max_drawdown": None if bool((pdf["value"] <= 0).any()) else max_drawdown(pdf["value"].to_numpy()),
+        "max_drawdown_eligible": not bool((pdf["value"] <= 0).any()),
+        "price_level_change": float(pdf["value"].iloc[-1] - pdf["value"].iloc[0]),
+        "drawdown_note": (
+            "样本含非正价格。百分比最大回撤不计算，也不能与股票回撤并列。price_level_change 是期末减期初的价格水平，单位与原序列相同。"
+            if bool((pdf["value"] <= 0).any())
+            else "百分比回撤用价格相对历史高点的比值。只在全部价格为正时计算。"
+        ),
         "var_alpha": alpha,
         "var": var,
         "expected_shortfall": expected_shortfall,
@@ -138,6 +145,10 @@ def summarize_price(frame: pl.DataFrame, window: int, alpha: float) -> dict:
         "ljung_box_lags": 10,
         "ljung_box_pvalue": ljung_box_pvalue(returns.to_numpy(), 10),
         "ljung_box_note": "Ljung-Box 检验收益自相关，只是描述统计，不是交易信号。",
+        "var_sample_note": (
+            f"5% 尾部大约有 {max(int(returns.shape[0] * alpha), 0)} 个收益。"
+            + ("少于 20 个时，VaR 和 Expected Shortfall 不稳定。" if returns.shape[0] * alpha < 20 else "这仍是样本分位数，不是模型预测。")
+        ),
     }
 
 

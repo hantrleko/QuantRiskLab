@@ -97,6 +97,7 @@ export function fetchCorrelation(asOf: string, window: number) {
 
 export function fetchHeatmap(asOf: string) {
   return getJson<{
+    as_of: string;
     price_vol: { title: string; unit: string; caveat: string; columns: string[]; rows: HeatRow[] };
     level_scale: { title: string; unit: string; caveat: string; columns: string[]; rows: HeatRow[] };
   }>(`/api/heatmap?as_of=${asOf}`);
@@ -111,7 +112,10 @@ export function fetchMetrics(seriesId: string, asOf: string, window: number) {
     loss_var?: number;
     loss_expected_shortfall?: number;
     realized_vol?: number | null;
-    max_drawdown?: number;
+    max_drawdown?: number | null;
+    max_drawdown_eligible?: boolean;
+    drawdown_note?: string;
+    var_sample_note?: string;
     sample_start?: string;
     sample_end?: string;
     n_returns?: number;
@@ -124,6 +128,30 @@ export type PositionSeries = {
   title_zh: string;
   points: { observation_date: string; release_date: string; net_positions: number | null; open_interest: number | null }[];
 };
+
+export type AvailabilityRow = {
+  series_id: string;
+  availability_quality: string;
+  availability_rule: string;
+  available_at_utc: string | null;
+  release_at_utc: string | null;
+};
+
+export type SnapshotInfo = {
+  available: boolean;
+  snapshot_id?: string;
+  file_mtime_utc?: string;
+  stale_flag_note?: string;
+  reason?: string;
+};
+
+export function fetchSnapshot() {
+  return getJson<SnapshotInfo>("/api/snapshot");
+}
+
+export function fetchAvailability() {
+  return getJson<{ series: AvailabilityRow[]; note: string }>("/api/availability");
+}
 
 export function fetchPositions(asOf: string) {
   return getJson<{ series: PositionSeries[]; caveat: string }>(`/api/positions?as_of=${asOf}`);
@@ -141,12 +169,22 @@ export type StructureEpisode = {
 };
 
 export type StructurePayload = {
+  as_of: string;
   answer: string;
   caveat: string;
   latest_dgs10_change: number | null;
   episodes: { count: number; definition: string; items: StructureEpisode[] };
   tails: {
-    sp500_wti_lower: { eligible: boolean; reason?: string | null; lambda?: number; n?: number; note: string };
+    sp500_wti_lower: {
+      eligible: boolean;
+      reason?: string | null;
+      n?: number;
+      n_joint_tail?: number;
+      coexceedance?: number;
+      independence_coexceedance?: number;
+      lift?: number | null;
+      note: string;
+    };
     fast_rate_and_equity_loss: { eligible: boolean; reason?: string | null; probability?: number; n?: number; note: string };
   };
   network: {

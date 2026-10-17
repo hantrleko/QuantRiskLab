@@ -3,6 +3,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 from quantrisklab.sources.fred import _parse_value
 
 RAW = Path(__file__).resolve().parents[1] / "data" / "raw" / "fred" / "DGS2.observations.offset0.json"

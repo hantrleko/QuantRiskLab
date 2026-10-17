@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { EChartsOption } from "echarts";
 import {
   fetchCatalog,
@@ -7,7 +7,9 @@ import {
   fetchMetrics,
   fetchPositions,
   fetchQuality,
+  fetchAvailability,
   fetchSeries,
+  fetchSnapshot,
   fetchStructure,
   type FailureRow,
   type HeatRow,
@@ -15,10 +17,13 @@ import {
   type Observation,
   type PositionSeries,
   type QualityRow,
+  type AvailabilityRow,
   type SeriesMeta,
+  type SnapshotInfo,
   type StructurePayload,
 } from "./api";
 import { Chart, baseAxis, chartText, palette } from "./Chart";
+import { Studio } from "./Studio";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const { muted } = chartText();
@@ -36,9 +41,10 @@ function lineOption(series: { name: string; points: Observation[] }[], yName: st
   return {
     color: palette,
     tooltip: { trigger: "axis" },
-    legend: { textStyle: { color: muted }, top: 0 },
-    grid: { left: 64, right: 18, top: 42, bottom: 64 },
-    dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 16 }],
+    legend: { textStyle: { color: muted }, type: "scroll", bottom: 0 },
+    grid: { left: 12, right: 16, top: 36, bottom: 78, containLabel: true },
+    dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 28 }],
+    toolbox: { right: 8, top: 0, feature: { restore: { title: "重置缩放" } } },
     xAxis: { type: "time", ...axis },
     yAxis: { type: "value", name: yName, scale: true, ...axis },
     series: series.map((item) => ({
@@ -136,17 +142,40 @@ export function App() {
   const [positions, setPositions] = useState<PositionSeries[]>([]);
   const [positionNote, setPositionNote] = useState("");
   const [structure, setStructure] = useState<StructurePayload | null>(null);
+  const [page, setPage] = useState<"overview" | "pit" | "research" | "audit" | "replay" | "explore" | "tails" | "compare" | "export">("overview");
+  const [status, setStatus] = useState<"loading" | "success" | "empty" | "error">("loading");
   const [error, setError] = useState("");
+  const [snapshot, setSnapshot] = useState<SnapshotInfo | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
+  const [coverageEnd, setCoverageEnd] = useState<string | null>(null);
+  const requestSerial = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
+    const requestId = ++requestSerial.current;
+    const queryAsOf = asOf;
+    const queryWindow = windowSize;
+    setStatus("loading");
+    setError("");
+    setStructure(null);
+    setPoints({});
+    setHeatmap(null);
+    setCorrelation(null);
+    setMetrics([]);
+    setPositions([]);
+    setQuality([]);
+    setLatestMacro({});
     async function load() {
-      setError("");
       try {
-        const catalogBody = await fetchCatalog();
-        if (cancelled) return;
+        const [catalogBody, snapshotBody, availabilityBody] = await Promise.all([
+          fetchCatalog(),
+          fetchSnapshot(),
+          fetchAvailability(),
+        ]);
+        if (requestSerial.current !== requestId) return;
         const datasets = catalogBody.series;
         setCatalog(datasets);
+        setSnapshot(snapshotBody);
+        setAvailability(availabilityBody.series);
         const priceIds = datasets.filter((item) => item.price_metrics).map((item) => item.series_id);
         const macroIds = datasets.filter((item) => item.role === "macro").map((item) => item.series_id);
         const levelIds = datasets
@@ -154,34 +183,64 @@ export function App() {
           .map((item) => item.series_id);
         const [qualityBody, heatmapBody, correlationBody, positionBody, structureBody, seriesBodies, latestBodies, metricBodies] =
           await Promise.all([
-            fetchQuality(asOf),
-            fetchHeatmap(asOf),
-            fetchCorrelation(asOf, windowSize),
-            fetchPositions(asOf),
-            fetchStructure(asOf, windowSize).catch(() => null),
-            Promise.all(levelIds.map(async (id) => [id, (await fetchSeries(id, asOf)).observations] as const)),
+            fetchQuality(queryAsOf),
+            fetchHeatmap(queryAsOf),
+            fetchCorrelation(queryAsOf, queryWindow),
+            fetchPositions(queryAsOf),
+            fetchStructure(queryAsOf, queryWindow),
+            Promise.all(levelIds.map(async (id) => [id, (await fetchSeries(id, queryAsOf)).observations] as const)),
             Promise.all(macroIds.map(async (id) => [id, (await fetchSeries(id, TODAY)).observations] as const)),
-            Promise.all(priceIds.map((id) => fetchMetrics(id, asOf, windowSize))),
+            Promise.all(priceIds.map((id) => fetchMetrics(id, queryAsOf, queryWindow))),
           ]);
-        if (cancelled) return;
+        if (requestSerial.current !== requestId) return;
+        if (structureBody.as_of !== queryAsOf || heatmapBody.as_of !== queryAsOf) {
+          throw new Error("返回结果的 as_of 与当前查询不一致");
+        }
+        const visibleSeries = seriesBodies.map(
+          ([id, observations]) =>
+            [id, observations.filter((point) => point.observation_date <= queryAsOf && point.release_date <= queryAsOf)] as const,
+        );
+        const visibleCount = visibleSeries.reduce((sum, [, observations]) => sum + observations.length, 0);
+        const structureVisible: StructurePayload = {
+          ...structureBody,
+          episodes: {
+            ...structureBody.episodes,
+            items: structureBody.episodes.items.filter((item) => item.end <= queryAsOf),
+          },
+          crises: {
+            ...structureBody.crises,
+            windows: structureBody.crises.windows.filter((item) => item.start <= queryAsOf),
+          },
+        };
+        const ends = qualityBody.series.map((row) => row.end).filter((value): value is string => Boolean(value));
+        setCoverageEnd(ends.length ? ends.sort().at(-1) ?? null : null);
         setQuality(qualityBody.series);
         setFailures(qualityBody.failures);
         setHeatmap(heatmapBody);
         setCorrelation(correlationBody);
-        setPositions(positionBody.series);
+        setPositions(
+          positionBody.series
+            .map((series) => ({
+              ...series,
+              points: series.points.filter((point) => point.release_date <= queryAsOf && point.observation_date <= queryAsOf),
+            }))
+            .filter((series) => series.points.length > 0),
+        );
         setPositionNote(positionBody.caveat);
-        setStructure(structureBody);
-        setPoints(Object.fromEntries(seriesBodies));
+        setPoints(Object.fromEntries(visibleSeries));
         setLatestMacro(Object.fromEntries(latestBodies));
         setMetrics(metricBodies);
+        setStructure(structureVisible);
+        const hasVisible = visibleCount > 0 || qualityBody.series.some((row) => row.n_visible > 0);
+        setStatus(hasVisible ? "success" : "empty");
       } catch (exc) {
-        if (!cancelled) setError(exc instanceof Error ? exc.message : "无法读取后端");
+        if (requestSerial.current !== requestId) return;
+        setStatus("error");
+        setError(exc instanceof Error ? exc.message : "无法读取后端");
+        setStructure(null);
       }
     }
     void load();
-    return () => {
-      cancelled = true;
-    };
   }, [asOf, windowSize]);
 
   const levelSeries = catalog.filter((item) => item.role === "yield" || item.role === "spread");
@@ -285,8 +344,8 @@ export function App() {
     return {
       color: palette,
       tooltip: { trigger: "axis" },
-      legend: { textStyle: { color: muted } },
-      grid: { left: 64, right: 18, top: 36, bottom: 64 },
+      legend: { textStyle: { color: muted }, bottom: 0 },
+      grid: { left: 12, right: 16, top: 28, bottom: 72, containLabel: true },
       xAxis: { type: "category", data: items.map((item) => item.end), ...axis, axisLabel: { color: muted, rotate: 40 } },
       yAxis: { type: "value", name: "10年收益率变动（百分点）", ...axis },
       series: [{ name: "窗口变动", type: "bar", data: items.map((item) => item.change) }],
@@ -353,10 +412,10 @@ export function App() {
   }, [structure]);
 
   return (
-    <div className="page">
+    <div className="page" data-page={page} data-status={status} data-committed={status === "loading" ? "" : asOf}>
       <header>
         <div>
-          <div className="kicker">QuantRiskLab · V0.2</div>
+          <div className="kicker">QuantRiskLab · V0.4</div>
           <h1>宏观与风险研究工作台</h1>
           <p className="sub">图上的点都来自本地库里的公开观测。没有序列时留空，不用假数据补。</p>
         </div>
@@ -397,13 +456,43 @@ export function App() {
       </header>
       <div className="note">
         利率、利差和 VIX 按水平展示，不换算成债券收益。收益、实现波动率、回撤、历史模拟 VaR 和 Expected Shortfall 只用于价格或价格指数。
-        本版不做策略回测，不提供买卖建议。
+        V0.4 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。
       </div>
-      {error ? <div className="warn">后端没有返回数据：{error}</div> : null}
+      <nav className="windows">
+        {(
+          [
+            ["overview", "风险总览"],
+            ["pit", "历史时点"],
+            ["research", "风险研究"],
+            ["audit", "数据审计"],
+            ["replay", "回放"],
+            ["explore", "探索"],
+            ["tails", "尾部"],
+            ["compare", "对照"],
+            ["export", "实验"],
+          ] as const
+        ).map(([id, label]) => (
+          <button key={id} className={page === id ? "active" : ""} type="button" onClick={() => setPage(id)}>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <p className="caption">
+        查询日期 {asOf}。数据库覆盖至 {coverageEnd ?? "尚无可见观测"}。快照 {snapshot?.snapshot_id ?? "读取中"}
+        {snapshot?.file_mtime_utc ? `，生成于 ${snapshot.file_mtime_utc}` : ""}。
+      </p>
+      {status === "loading" ? <div className="note">正在按 {asOf}、{windowSize} 日窗口重新计算。上一组结果已隐藏。</div> : null}
+      {status === "error" ? <div className="warn">这次查询失败：{error}</div> : null}
+      {status === "empty" ? (
+        <div className="empty">截至 {asOf} 没有可见观测。这是无数据状态，不是上一次查询留下的图。</div>
+      ) : null}
+      {page === "replay" || page === "explore" || page === "tails" || page === "compare" || page === "export" ? (
+        <Studio mode={page} asOf={asOf} windowSize={windowSize} />
+      ) : null}
 
-      <section className="panel">
+      <section className="panel result only-overview only-research">
         <h2>利率快速变化时的风险结构</h2>
-        <p className="caption">{structure?.answer ?? "等待后端计算。"}</p>
+        <p className="caption">{status === "success" ? structure?.answer : ""}</p>
         <p className="caption">{structure?.episodes.definition}</p>
         {structure ? <Chart option={episodeOption} height={320} /> : <div className="empty">还没有结构结果。</div>}
         <ul>
@@ -419,12 +508,12 @@ export function App() {
         </ul>
       </section>
 
-      <div className="grid">
+      <div className="grid result only-research">
         <section className="panel">
           <h2>动态风险网络</h2>
           <p className="caption">
             {structure?.network.eligible
-              ? `最近 ${structure.network.n} 个重叠观测。边表示绝对相关不低于 ${structure.network.threshold}。收益和利率差分可以相关，但利率差分不是债券收益。`
+              ? `最近 ${structure.network.n} 个重叠观测。边是样本相关，不是因果传染。利差与两个国债收益率之间的边含会计恒等式。`
               : structure?.network.reason ?? "等待网络。"}
           </p>
           {structure?.network.eligible ? <Chart option={networkOption} height={380} /> : <div className="empty">{structure?.network.reason ?? "网络不可用。"}</div>}
@@ -434,7 +523,7 @@ export function App() {
           <p className="caption">{structure?.tails.sp500_wti_lower.note}</p>
           <p>
             {structure?.tails.sp500_wti_lower.eligible
-              ? `标普 500 与 WTI 的下尾共现系数 λ = ${structure.tails.sp500_wti_lower.lambda?.toFixed(2)}（n=${structure.tails.sp500_wti_lower.n}）。`
+              ? `联合尾部 ${structure.tails.sp500_wti_lower.n_joint_tail ?? "—"} 个（n=${structure.tails.sp500_wti_lower.n}）。coexceedance=${structure.tails.sp500_wti_lower.coexceedance?.toFixed(2)}，独立基准约 ${structure.tails.sp500_wti_lower.independence_coexceedance}。lift=${structure.tails.sp500_wti_lower.lift?.toFixed(2)}，独立基准为 1。`
               : structure?.tails.sp500_wti_lower.reason}
           </p>
           <p className="caption">{structure?.tails.fast_rate_and_equity_loss.note}</p>
@@ -459,27 +548,38 @@ export function App() {
         </section>
       </div>
 
-      <section className="panel">
+      <section className="panel result only-research">
         <h2>历史危机对照</h2>
         <p className="caption">{structure?.crises.note}</p>
         {structure?.crises.windows.length ? <Chart option={crisisOption} height={320} /> : <div className="empty">这个 as_of 之前没有预设对照窗口。</div>}
       </section>
 
-      <section className="panel">
+      <section className="panel result only-overview">
         <h2>利率与信用利差</h2>
         <p className="caption">折线图。纵轴是百分点，不是资产价格。</p>
         {levelSeries.length ? <Chart option={macroOption} /> : <div className="empty">没有下载到利率或利差序列。</div>}
       </section>
 
-      <div className="grid">
-        <section className="panel">
+      <div className="grid result">
+        <section className="panel result only-overview">
           <h2>VIX 水平</h2>
           <p className="caption">波动率指数。指数变动不是持仓收益。</p>
           {vix ? <Chart option={vixOption} height={300} /> : <div className="empty">没有 VIX 序列。</div>}
         </section>
-        <section className="panel">
+        <section className="panel result only-pit">
           <h2>宏观修订的 point-in-time</h2>
-          <p className="caption">as_of 当时已发布的 vintage，以及今天可见的最新修订。修订不会提前出现。失业率和 CPI 都是水平，不是资产价格。</p>
+          <p className="caption">
+            查询日期是 {asOf}。图比较该日已经发布的 CPI vintage，以及今天可见的最新修订。修订不会提前出现。CPI 的 realtime_start 是发布日期，不是日内时刻。
+          </p>
+          <ul>
+            {availability
+              .filter((row) => ["CPIAUCSL", "DFF", "DGS10", "CFTC"].includes(row.series_id))
+              .map((row) => (
+                <li key={row.series_id}>
+                  {row.series_id}：{qualityLabel(row.availability_quality)}。{row.availability_rule}
+                </li>
+              ))}
+          </ul>
           {macroCharts.length ? (
             macroCharts.map((item) => (
               <div key={item.id}>
@@ -493,19 +593,19 @@ export function App() {
         </section>
       </div>
 
-      <section className="panel">
+      <section className="panel result only-research">
         <h2>季度实现波动率</h2>
         <p className="caption">{heatmap?.price_vol.caveat ?? "热力图只包含价格序列。"}</p>
         {heatmap?.price_vol.rows.length ? <Chart option={priceHeat} height={320} /> : <div className="empty">没有足够的价格序列。</div>}
       </section>
 
-      <section className="panel">
+      <section className="panel result only-research">
         <h2>利率与利差的变动尺度</h2>
         <p className="caption">{heatmap?.level_scale.caveat ?? "这是水平差分的尺度，不是资产波动率。"}</p>
         {heatmap?.level_scale.rows.length ? <Chart option={levelHeat} height={340} /> : <div className="empty">没有日频水平序列。</div>}
       </section>
 
-      <div className="grid">
+      <div className="grid result only-overview only-research">
         <section className="panel">
           <h2>{correlation?.price_returns.eligible ? "价格收益相关矩阵" : "水平差分相关矩阵"}</h2>
           <p className="caption">
@@ -526,7 +626,11 @@ export function App() {
                 {item.eligible
                   ? `：${item.sample_start} 至 ${item.sample_end}，${item.n_returns} 个收益，${windowSize} 日实现波动率 ${
                       item.realized_vol == null ? "样本不足" : `${(item.realized_vol * 100).toFixed(1)}%`
-                    }，最大回撤 ${((item.max_drawdown ?? 0) * 100).toFixed(1)}%。`
+                    }，${
+                      item.max_drawdown == null
+                        ? item.drawdown_note ?? "百分比回撤不可用"
+                        : `最大回撤 ${(item.max_drawdown * 100).toFixed(1)}%`
+                    }。${item.var_sample_note ?? ""}`
                   : `：${item.reason}`}
               </li>
             ))}
@@ -534,22 +638,24 @@ export function App() {
         </section>
       </div>
 
-      <section className="panel">
+      <section className="panel result only-research">
         <h2>10年与2年收益率差分的滚动相关</h2>
         <p className="caption">{correlation?.rolling.note ?? correlation?.rolling.reason ?? "水平差分的滚动相关，不是收益相关。"}</p>
         {correlation?.rolling.eligible ? <Chart option={rollingOption} height={300} /> : <div className="empty">{correlation?.rolling.reason ?? "滚动相关不可用。"}</div>}
       </section>
 
-      <section className="panel">
+      <section className="panel result only-research">
         <h2>CFTC 净持仓</h2>
         <p className="caption">{positionNote || "时间轴使用公布日。持仓张数不是价格。"}</p>
         {positions.length ? <Chart option={cotOption} /> : <div className="empty">没有匹配到的 CFTC 持仓。</div>}
       </section>
 
-      <section className="panel">
+      <section className="panel only-audit">
         <h2>数据质量</h2>
-        <p className="caption">缺失保持缺失。vintage 行数高于可见样本，说明修订被保留，而不是用最新值覆盖历史。</p>
-        <div style={{ overflowX: "auto" }}>
+        <p className="caption">
+          可见起止是这次 as_of 下的观测日期，不是公布时刻。新鲜度是快照建库时写入的，不会在部署后自动刷新。date_approximate 表示只有日期近似，没有精确公布时刻。
+        </p>
+        <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -563,7 +669,8 @@ export function App() {
                 <th>vintage 行</th>
                 <th>有修订的观测</th>
                 <th>发布早于观测</th>
-                <th>状态</th>
+                <th>新鲜度</th>
+                <th>可得性</th>
               </tr>
             </thead>
             <tbody>
@@ -589,10 +696,11 @@ export function App() {
                   <td>{row.n_vintage_rows}</td>
                   <td>{row.revised_observations}</td>
                   <td>{row.release_before_observation}</td>
+                  <td>{row.stale ? "建库时已滞后" : "建库时仍在更新窗口"}</td>
                   <td>
-                    {row.stale ? "滞后或停更" : "在更新窗口内"}
+                    {qualityLabel(availability.find((item) => item.series_id === row.series_id)?.availability_quality)}
                     <br />
-                    {row.pit_mode}
+                    {availability.find((item) => item.series_id === row.series_id)?.availability_rule ?? row.pit_mode}
                   </td>
                 </tr>
               ))}
@@ -602,7 +710,7 @@ export function App() {
       </section>
 
       {failures.length ? (
-        <section className="panel">
+        <section className="panel only-audit">
           <h2>下载障碍</h2>
           <table>
             <thead>
@@ -630,7 +738,8 @@ export function App() {
       ) : null}
 
       <footer>
-        <p>V0.1 不包含策略回测。页面上的数字不是可交易业绩。</p>
+        <p>数据来自 FRED、ALFRED 与 CFTC 的公开序列，经本地计算后展示。FRED 与圣路易斯联储不为本应用背书。第三方指数和商品价格另有其来源条款。这不是投资建议。</p>
+        <p>V0.4 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认，因此这不是对外发布版本。</p>
         <p>以后若做回测，必须同时报告 walk-forward、费用、参数敏感性、基准和样本外结果。</p>
         <p>
           as_of = {asOf}。相关窗口 = {windowSize} 个观测。
@@ -638,6 +747,15 @@ export function App() {
       </footer>
     </div>
   );
+}
+
+function qualityLabel(quality: string | undefined): string {
+  if (quality === "date_approximate") return "日期近似，不是精确公布时刻";
+  if (quality === "rule_based_intraday_unverified") return "有日内惯例，但没有逐日核实的时刻";
+  if (quality === "vintage_date") return "修订发布日，不含日内时刻";
+  if (quality === "official_calendar_date") return "官方日历上的发布日，时刻未写入每条记录";
+  if (quality === "mechanical_identity") return "由其他序列相减，不是独立公布";
+  return quality ?? "未单列可得性规则";
 }
 
 function shiftYears(asOf: string, years: number): string {

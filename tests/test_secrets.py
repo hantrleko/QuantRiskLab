@@ -3,6 +3,10 @@
 import os
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 from quantrisklab.fred_key import ensure_fred_api_key
 
 ROOT = Path(__file__).resolve().parents[1]

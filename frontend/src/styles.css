@@ -129,6 +129,63 @@ th, td { border-bottom: 1px solid #243024; text-align: left; padding: 6px 4px; v
 
 .caption { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
 
+.is-hidden { display: none; }
+
+.page[data-page="replay"] .only-overview,
+.page[data-page="replay"] .only-pit,
+.page[data-page="replay"] .only-research,
+.page[data-page="replay"] .only-audit,
+.page[data-page="explore"] .only-overview,
+.page[data-page="explore"] .only-pit,
+.page[data-page="explore"] .only-research,
+.page[data-page="explore"] .only-audit,
+.page[data-page="tails"] .only-overview,
+.page[data-page="tails"] .only-pit,
+.page[data-page="tails"] .only-research,
+.page[data-page="tails"] .only-audit,
+.page[data-page="compare"] .only-overview,
+.page[data-page="compare"] .only-pit,
+.page[data-page="compare"] .only-research,
+.page[data-page="compare"] .only-audit,
+.page[data-page="export"] .only-overview,
+.page[data-page="export"] .only-pit,
+.page[data-page="export"] .only-research,
+.page[data-page="export"] .only-audit,
+.page[data-page="replay"] .result,
+.page[data-page="explore"] .result,
+.page[data-page="tails"] .result,
+.page[data-page="compare"] .result,
+.page[data-page="export"] .result,
+.page[data-status="loading"] .result,
+.page[data-status="error"] .result,
+.page[data-status="empty"] .result {
+  display: none;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.table-scroll table {
+  min-width: 920px;
+}
+
+.page[data-page="overview"] .only-pit:not(.only-overview),
+.page[data-page="overview"] .only-research:not(.only-overview),
+.page[data-page="overview"] .only-audit:not(.only-overview),
+.page[data-page="pit"] .only-overview:not(.only-pit),
+.page[data-page="pit"] .only-research:not(.only-pit),
+.page[data-page="pit"] .only-audit:not(.only-pit),
+.page[data-page="research"] .only-overview:not(.only-research),
+.page[data-page="research"] .only-pit:not(.only-research),
+.page[data-page="research"] .only-audit:not(.only-research),
+.page[data-page="audit"] .only-overview:not(.only-audit),
+.page[data-page="audit"] .only-pit:not(.only-audit),
+.page[data-page="audit"] .only-research:not(.only-audit) {
+  display: none;
+}
+
 .page {
   min-height: 100vh;
   max-width: 1440px;

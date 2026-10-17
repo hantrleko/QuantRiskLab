@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts";
 
+export type ChartHandle = echarts.ECharts;
+
 const text = "#d7e0ea";
 const muted = "#8ea0b3";
 const axis = "#314052";
@@ -14,7 +16,15 @@ export function baseAxis() {
   };
 }
 
-export function Chart({ option, height = 360 }: { option: echarts.EChartsOption; height?: number }) {
+export function Chart({
+  option,
+  height = 360,
+  onReady,
+}: {
+  option: echarts.EChartsOption;
+  height?: number;
+  onReady?: (chart: echarts.ECharts) => void;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
@@ -33,8 +43,13 @@ export function Chart({ option, height = 360 }: { option: echarts.EChartsOption;
     };
   }, []);
 
+  const readyRef = useRef(onReady);
+  readyRef.current = onReady;
+
   useEffect(() => {
-    chartRef.current?.setOption(option, true);
+    if (!chartRef.current) return;
+    chartRef.current.setOption(option, true);
+    readyRef.current?.(chartRef.current);
   }, [option]);
 
   return <div ref={ref} style={{ height, width: "100%" }} />;
