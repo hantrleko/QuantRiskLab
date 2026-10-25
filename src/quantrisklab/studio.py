@@ -22,7 +22,7 @@ from quantrisklab.pit_clock import snapshot_status
 
 EXPERIMENT_DIR = DATA_DIR / "experiments"
 PRICE_IDS = {"SP500", "DCOILWTICO"}
-DIFF_IDS = {"DGS2", "DGS10", "DFF", "T10Y2Y", "BAMLC0A0CM"}
+DIFF_IDS = {"DGS2", "DGS10", "DFF", "T10Y2Y", "BAMLC0A0CM", "DFII10", "T10YIE", "DTWEXBGS"}
 LEVEL_IDS = {"VIXCLS", "CPIAUCSL"}
 TRANSFORMS = {
     "SP500": "simple_return",
@@ -32,6 +32,9 @@ TRANSFORMS = {
     "DFF": "difference",
     "T10Y2Y": "difference",
     "BAMLC0A0CM": "difference",
+    "DFII10": "difference",
+    "T10YIE": "difference",
+    "DTWEXBGS": "difference",
     "VIXCLS": "level",
     "CPIAUCSL": "level",
 }
@@ -129,20 +132,21 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
 
 
 def explore_pair(connection, as_of: date, left: str, right: str, window: int) -> dict:
+    if left not in TRANSFORMS or right not in TRANSFORMS:
+        return {"eligible": False, "reason": f"没有为 {left} 或 {right} 规定转换类型", "as_of": as_of.isoformat()}
     frames = {left: _level_frame(connection, left, as_of), right: _level_frame(connection, right, as_of)}
     try:
         left_values = _transform(frames[left], left, TRANSFORMS[left])
         right_values = _transform(frames[right], right, TRANSFORMS[right])
     except ValueError as exc:
         return {"eligible": False, "reason": str(exc), "as_of": as_of.isoformat()}
-    paired = pd.concat([left_values.rename("left"), right_values.rename("right")], axis=1).dropna()
-    if len(paired) > window:
-        paired = paired.iloc[-window:]
-    if len(paired) < 20:
-        return {"eligible": False, "reason": "重叠样本少于 20", "n": int(len(paired)), "as_of": as_of.isoformat()}
+    paired_all = pd.concat([left_values.rename("left"), right_values.rename("right")], axis=1).dropna()
+    if len(paired_all) < 20:
+        return {"eligible": False, "reason": "重叠样本少于 20", "n": int(len(paired_all)), "as_of": as_of.isoformat()}
+    paired = paired_all.iloc[-window:] if len(paired_all) > window else paired_all
     corr = float(paired["left"].corr(paired["right"]))
     mechanical = {left, right} <= {"DGS10", "DGS2", "T10Y2Y"} and "T10Y2Y" in {left, right}
-    rolling = paired["left"].rolling(min(window, 63)).corr(paired["right"]).dropna()
+    rolling = paired_all["left"].rolling(63).corr(paired_all["right"]).dropna()
     scatter = [
         {"date": pd.Timestamp(stamp).date().isoformat(), "left": float(row.left), "right": float(row.right)}
         for stamp, row in paired.iterrows()
@@ -159,6 +163,8 @@ def explore_pair(connection, as_of: date, left: str, right: str, window: int) ->
         "sample_start": pd.Timestamp(paired.index[0]).date().isoformat(),
         "sample_end": pd.Timestamp(paired.index[-1]).date().isoformat(),
         "correlation": corr,
+        "rolling_on": "full_visible_history",
+        "rolling_window": 63,
         "mechanical": mechanical,
         "interpretation": "会计恒等式 T10Y2Y = DGS10 - DGS2，不是独立风险传导。" if mechanical else "样本相关，不是因果传染。",
         "scatter": scatter[-400:],
@@ -212,32 +218,50 @@ def tail_laboratory(connection, as_of: date, left: str, right: str, alpha: float
     return summary
 
 
-def compare_windows(connection, as_of: date, window_ids: list[str]) -> dict:
+def _measure_window(connection, as_of: date, item_id: str, title: str, start: date, requested_end: date) -> dict:
+    end = requested_end if requested_end <= as_of else as_of
+    row = {
+        "id": item_id,
+        "title": title,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "partial": end < requested_end,
+    }
+    for series_id, key, kind in (
+        ("DGS10", "dgs10_change", "change"),
+        ("VIXCLS", "vix_change", "change"),
+        ("SP500", "sp500_return", "return"),
+        ("DCOILWTICO", "wti_return", "return"),
+    ):
+        frame = _level_frame(connection, series_id, as_of)
+        if frame.empty or pd.Timestamp(frame["observation_date"].iloc[-1]).date() < start:
+            row[key] = None
+            row[f"{key}_status"] = "missing"
+            continue
+        if kind == "change":
+            row[key] = _window_change(frame, start, end)
+            row[f"{key}_status"] = "level_change" if row[key] is not None else "missing"
+        else:
+            result = _window_return(frame, start, end)
+            row[key] = result["value"]
+            row[f"{key}_status"] = result["status"]
+    return row
+
+
+def compare_windows(
+    connection,
+    as_of: date,
+    window_ids: list[str],
+    custom: tuple[date, date] | None = None,
+) -> dict:
     selected = [item for item in CRISIS_WINDOWS if item["id"] in window_ids and item["start"] <= as_of]
     missing_ids = [item for item in window_ids if item not in {row["id"] for row in CRISIS_WINDOWS}]
-    rows = []
-    for item in selected:
-        end = item["end"] if item["end"] <= as_of else as_of
-        row = {"id": item["id"], "title": item["title"], "start": item["start"].isoformat(), "end": end.isoformat(), "partial": end < item["end"]}
-        for series_id, key, kind in (
-            ("DGS10", "dgs10_change", "change"),
-            ("VIXCLS", "vix_change", "change"),
-            ("SP500", "sp500_return", "return"),
-            ("DCOILWTICO", "wti_return", "return"),
-        ):
-            frame = _level_frame(connection, series_id, as_of)
-            if frame.empty or pd.Timestamp(frame["observation_date"].iloc[-1]).date() < item["start"]:
-                row[key] = None
-                row[f"{key}_status"] = "missing"
-                continue
-            if kind == "change":
-                row[key] = _window_change(frame, item["start"], end)
-                row[f"{key}_status"] = "level_change" if row[key] is not None else "missing"
-            else:
-                result = _window_return(frame, item["start"], end)
-                row[key] = result["value"]
-                row[f"{key}_status"] = result["status"]
-        rows.append(row)
+    rows = [
+        _measure_window(connection, as_of, item["id"], item["title"], item["start"], item["end"])
+        for item in selected
+    ]
+    if custom is not None and custom[0] <= as_of:
+        rows.append(_measure_window(connection, as_of, "custom", "自选窗口", custom[0], custom[1]))
     return {
         "as_of": as_of.isoformat(),
         "windows": rows,

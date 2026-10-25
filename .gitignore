@@ -24,6 +24,10 @@ data/*.json
 logs/
 data/experiments/
 
+# Local audit captures. They are not part of the research snapshot.
+audit-screenshots/
+audit-screenshots-*/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

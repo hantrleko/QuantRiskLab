@@ -196,6 +196,7 @@ th, td { border-bottom: 1px solid #243024; text-align: left; padding: 6px 4px; v
 .sub { max-width: 720px; color: #9aa292; line-height: 1.5; }
 
 .windows { display: flex; flex-wrap: wrap; gap: 6px; }
+.subnav { margin-top: 8px; }
 
 .windows button {
   background: transparent;

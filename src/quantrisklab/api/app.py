@@ -30,6 +30,7 @@ from quantrisklab.api.queries import (
 from quantrisklab.logging_setup import setup_logging
 from quantrisklab.pit_clock import availability_catalog, snapshot_status
 from quantrisklab.metrics.structure import structure_payload
+from quantrisklab.research import research_payload
 from quantrisklab.studio import compare_windows, explore_pair, replay_track, save_experiment, tail_laboratory
 from quantrisklab.paths import DB_PATH, FAILURES_JSON, ROOT
 from quantrisklab.quality.checks import build_quality_report
@@ -305,12 +306,41 @@ def tails(
 
 
 @app.get("/api/compare")
-def compare(as_of: str | None = None, windows: str = "taper,covid,hike2022") -> dict:
+def compare(
+    as_of: str | None = None,
+    windows: str = "taper,covid,hike2022",
+    start: str | None = None,
+    end: str | None = None,
+) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    custom = None
+    if start or end:
+        if not start or not end:
+            raise HTTPException(status_code=422, detail="自选窗口需要同时给出 start 和 end")
+        start_day = _day(start, None)
+        end_day = _day(end, None)
+        if start_day is None or end_day is None or start_day > end_day:
+            raise HTTPException(status_code=422, detail="自选窗口的日期无效")
+        custom = (start_day, end_day)
+    connection = _db()
+    try:
+        payload = compare_windows(connection, day, [item for item in windows.split(",") if item], custom)
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/research")
+def research(as_of: str | None = None, window: int = Query(default=252, ge=21, le=756)) -> dict:
     day = _day(as_of, date.today())
     assert day is not None
     connection = _db()
     try:
-        payload = compare_windows(connection, day, [item for item in windows.split(",") if item])
+        payload = research_payload(connection, day, window)
+    except Exception:
+        logger.exception("研究计算失败")
+        raise
     finally:
         connection.close()
     return sanitize(payload)

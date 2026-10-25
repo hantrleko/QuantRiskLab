@@ -10,6 +10,7 @@ import {
   fetchAvailability,
   fetchSeries,
   fetchSnapshot,
+  fetchResearch,
   fetchStructure,
   type FailureRow,
   type HeatRow,
@@ -18,12 +19,13 @@ import {
   type PositionSeries,
   type QualityRow,
   type AvailabilityRow,
+  type ResearchPayload,
   type SeriesMeta,
   type SnapshotInfo,
   type StructurePayload,
 } from "./api";
 import { Chart, baseAxis, chartText, palette } from "./Chart";
-import { Studio } from "./Studio";
+import { ResearchMethods, Studio } from "./Studio";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const { muted } = chartText();
@@ -142,6 +144,7 @@ export function App() {
   const [positions, setPositions] = useState<PositionSeries[]>([]);
   const [positionNote, setPositionNote] = useState("");
   const [structure, setStructure] = useState<StructurePayload | null>(null);
+  const [research, setResearch] = useState<ResearchPayload | null>(null);
   const [page, setPage] = useState<"overview" | "pit" | "research" | "audit" | "replay" | "explore" | "tails" | "compare" | "export">("overview");
   const [status, setStatus] = useState<"loading" | "success" | "empty" | "error">("loading");
   const [error, setError] = useState("");
@@ -157,6 +160,7 @@ export function App() {
     setStatus("loading");
     setError("");
     setStructure(null);
+    setResearch(null);
     setPoints({});
     setHeatmap(null);
     setCorrelation(null);
@@ -231,6 +235,15 @@ export function App() {
         setLatestMacro(Object.fromEntries(latestBodies));
         setMetrics(metricBodies);
         setStructure(structureVisible);
+        let researchBody: ResearchPayload | null = null;
+        try {
+          researchBody = await fetchResearch(queryAsOf, queryWindow);
+          if (researchBody.as_of !== queryAsOf) researchBody = null;
+        } catch {
+          researchBody = null;
+        }
+        if (requestSerial.current !== requestId) return;
+        setResearch(researchBody);
         const hasVisible = visibleCount > 0 || qualityBody.series.some((row) => row.n_visible > 0);
         setStatus(hasVisible ? "success" : "empty");
       } catch (exc) {
@@ -415,7 +428,7 @@ export function App() {
     <div className="page" data-page={page} data-status={status} data-committed={status === "loading" ? "" : asOf}>
       <header>
         <div>
-          <div className="kicker">QuantRiskLab · V0.4</div>
+          <div className="kicker">QuantRiskLab · V1.0</div>
           <h1>宏观与风险研究工作台</h1>
           <p className="sub">图上的点都来自本地库里的公开观测。没有序列时留空，不用假数据补。</p>
         </div>
@@ -456,21 +469,48 @@ export function App() {
       </header>
       <div className="note">
         利率、利差和 VIX 按水平展示，不换算成债券收益。收益、实现波动率、回撤、历史模拟 VaR 和 Expected Shortfall 只用于价格或价格指数。
-        V0.4 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。
+        V1.0 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。
       </div>
-      <nav className="windows">
+      <nav className="windows" aria-label="工作区">
         {(
           [
-            ["overview", "风险总览"],
-            ["pit", "历史时点"],
-            ["research", "风险研究"],
-            ["audit", "数据审计"],
-            ["replay", "回放"],
-            ["explore", "探索"],
-            ["tails", "尾部"],
-            ["compare", "对照"],
-            ["export", "实验"],
+            ["observe", "观察", "overview"],
+            ["structure", "结构", "research"],
+            ["replay", "回放", "replay"],
+            ["record", "记录", "export"],
           ] as const
+        ).map(([id, label, first]) => {
+          const active =
+            (id === "observe" && (page === "overview" || page === "pit" || page === "audit")) ||
+            (id === "structure" && (page === "research" || page === "explore" || page === "tails")) ||
+            (id === "replay" && (page === "replay" || page === "compare")) ||
+            (id === "record" && page === "export");
+          return (
+            <button key={id} className={active ? "active" : ""} type="button" onClick={() => setPage(first)}>
+              {label}
+            </button>
+          );
+        })}
+      </nav>
+      <nav className="windows subnav" aria-label="页面">
+        {(page === "overview" || page === "pit" || page === "audit"
+          ? ([
+              ["overview", "风险总览"],
+              ["pit", "历史时点"],
+              ["audit", "数据审计"],
+            ] as const)
+          : page === "research" || page === "explore" || page === "tails"
+            ? ([
+                ["research", "风险研究"],
+                ["explore", "探索"],
+                ["tails", "尾部"],
+              ] as const)
+            : page === "replay" || page === "compare"
+              ? ([
+                  ["replay", "回放"],
+                  ["compare", "对照"],
+                ] as const)
+              : ([["export", "实验"]] as const)
         ).map(([id, label]) => (
           <button key={id} className={page === id ? "active" : ""} type="button" onClick={() => setPage(id)}>
             {label}
@@ -489,6 +529,7 @@ export function App() {
       {page === "replay" || page === "explore" || page === "tails" || page === "compare" || page === "export" ? (
         <Studio mode={page} asOf={asOf} windowSize={windowSize} />
       ) : null}
+      {page === "research" ? <ResearchMethods body={research} /> : null}
 
       <section className="panel result only-overview only-research">
         <h2>利率快速变化时的风险结构</h2>
@@ -739,7 +780,7 @@ export function App() {
 
       <footer>
         <p>数据来自 FRED、ALFRED 与 CFTC 的公开序列，经本地计算后展示。FRED 与圣路易斯联储不为本应用背书。第三方指数和商品价格另有其来源条款。这不是投资建议。</p>
-        <p>V0.4 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认，因此这不是对外发布版本。</p>
+        <p>V1.0 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。</p>
         <p>以后若做回测，必须同时报告 walk-forward、费用、参数敏感性、基准和样本外结果。</p>
         <p>
           as_of = {asOf}。相关窗口 = {windowSize} 个观测。

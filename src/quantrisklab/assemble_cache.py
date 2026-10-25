@@ -34,7 +34,7 @@ logger = logging.getLogger("quantrisklab.assemble")
 
 CACHED_SERIES = ("DGS2", "DGS10", "DFF", "T10Y2Y", "VIXCLS")
 # These files are already on disk. Read them. Do not request FRED again.
-EXTRA_LOCAL_FRED = ("DCOILWTICO", "SP500", "BAMLC0A0CM")
+EXTRA_LOCAL_FRED = ("DCOILWTICO", "SP500", "BAMLC0A0CM", "DFII10", "T10YIE", "DTWEXBGS")
 CFTC_LOCAL = (
     ("disagg", "fut_disagg_txt_2025.zip", "https://www.cftc.gov/files/dea/history/fut_disagg_txt_2025.zip"),
     ("disagg", "fut_disagg_txt_2026.zip", "https://www.cftc.gov/files/dea/history/fut_disagg_txt_2026.zip"),

@@ -1,6 +1,6 @@
 """QuantRiskLab: public-data research workbench for macro series and risk summaries."""
 
-__version__ = "0.4.0"
+__version__ = "1.0.0"
 
 
 def main() -> None:

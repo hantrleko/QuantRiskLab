@@ -230,3 +230,59 @@ export type StructurePayload = {
 export function fetchStructure(asOf: string, window: number) {
   return getJson<StructurePayload>(`/api/structure?as_of=${asOf}&window=${window}`);
 }
+
+export type ResearchPayload = {
+  as_of: string;
+  version: string;
+  note: string;
+  decomposition: {
+    status: string;
+    reason?: string | null;
+    residual?: number | null;
+    note?: string;
+    latest?: { date: string; nominal: number; real: number; breakeven: number; residual: number } | null;
+    points?: { date: string; nominal: number; real: number; breakeven: number; residual: number }[];
+    dollar?: { status: string; reason?: string; date?: string; level?: number; change_63?: number | null; note?: string };
+  };
+  euler: {
+    eligible: boolean;
+    reason?: string | null;
+    n?: number;
+    names?: string[];
+    shares?: number[];
+    weights?: number[];
+    note?: string;
+    sample_start?: string;
+    sample_end?: string;
+  };
+  local_projection: {
+    eligible: boolean;
+    label: string;
+    reason?: string | null;
+    horizons: { horizon: number; eligible: boolean; beta?: number; se?: number; n?: number; pvalue?: number; reason?: string }[];
+  };
+  crowding: {
+    status: string;
+    reason?: string | null;
+    note?: string;
+    markets: {
+      market_id: string;
+      title_zh: string;
+      observation_date: string;
+      release_date: string;
+      net_over_oi: number | null;
+      zscore: number | null;
+      n: number;
+    }[];
+  };
+  funding: {
+    status: string;
+    reason?: string | null;
+    note?: string;
+    latest?: { date: string; oas: number; change_21: number | null; zscore: number | null } | null;
+  };
+};
+
+export function fetchResearch(asOf: string, window: number) {
+  return getJson<ResearchPayload>(`/api/research?as_of=${asOf}&window=${window}`);
+}

@@ -1,7 +1,28 @@
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
+import { BarChart, GraphChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent, DataZoomComponent, ToolboxComponent, VisualMapComponent } from "echarts/components";
+import * as echarts from "echarts/core";
+import type { EChartsCoreOption } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 
-export type ChartHandle = echarts.ECharts;
+echarts.use([
+  BarChart,
+  GraphChart,
+  HeatmapChart,
+  LineChart,
+  ScatterChart,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  ToolboxComponent,
+  VisualMapComponent,
+  CanvasRenderer,
+]);
+
+export type ChartHandle = {
+  getDataURL: (opts?: { type?: "png" | "jpeg" | "svg"; pixelRatio?: number; backgroundColor?: string }) => string;
+};
 
 const text = "#d7e0ea";
 const muted = "#8ea0b3";
@@ -21,9 +42,9 @@ export function Chart({
   height = 360,
   onReady,
 }: {
-  option: echarts.EChartsOption;
+  option: EChartsCoreOption;
   height?: number;
-  onReady?: (chart: echarts.ECharts) => void;
+  onReady?: (chart: ChartHandle) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);

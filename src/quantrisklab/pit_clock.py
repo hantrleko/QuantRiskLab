@@ -43,6 +43,39 @@ RULES = [
         "availability_rule": "与 DGS2 相同。库内 release_date 等于观测日，质量标记为未逐日核实的日内惯例。",
     },
     {
+        "series_id": "DFII10",
+        "observation_date": "H.15 实际收益率所对应的营业日",
+        "release_at_utc": None,
+        "available_at_utc": None,
+        "ingested_at_utc": None,
+        "vintage_id": None,
+        "availability_quality": "rule_based_intraday_unverified",
+        "source_timezone": "America/New_York",
+        "availability_rule": "与 DGS10 相同，沿用 H.15 16:15（美东）的现行惯例。该时刻没有逐日回填。",
+    },
+    {
+        "series_id": "T10YIE",
+        "observation_date": "H.15 盈亏平衡通胀率所对应的营业日",
+        "release_at_utc": None,
+        "available_at_utc": None,
+        "ingested_at_utc": None,
+        "vintage_id": None,
+        "availability_quality": "rule_based_intraday_unverified",
+        "source_timezone": "America/New_York",
+        "availability_rule": "与 DGS10 相同，沿用 H.15 16:15（美东）的现行惯例。该时刻没有逐日回填。",
+    },
+    {
+        "series_id": "DTWEXBGS",
+        "observation_date": "美元指数所对应的营业日",
+        "release_at_utc": None,
+        "available_at_utc": None,
+        "ingested_at_utc": None,
+        "vintage_id": None,
+        "availability_quality": "date_approximate",
+        "source_timezone": "America/New_York",
+        "availability_rule": "广义美元指数按观测日入库。没有逐日核实的发布时刻，因此 available_at_utc 留空。",
+    },
+    {
         "series_id": "T10Y2Y",
         "observation_date": "由 DGS10 减 DGS2",
         "release_at_utc": None,
@@ -80,7 +113,7 @@ RULES = [
 
 def availability_catalog() -> dict:
     return {
-        "clock": "v0.3",
+        "clock": "v1.0",
         "fields": [
             "observation_date",
             "release_at_utc",

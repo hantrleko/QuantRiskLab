@@ -1,0 +1,10 @@
+audit-screenshots
+audit-screenshots-v031
+audit-screenshots-v04
+.git
+frontend/node_modules
+**/*.duckdb.wal
+data/raw
+data/parquet
+data/experiments
+logs

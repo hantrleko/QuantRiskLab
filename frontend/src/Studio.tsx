@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EChartsOption } from "echarts";
-import { Chart, baseAxis, chartText, palette } from "./Chart";
+import type { ResearchPayload } from "./api";
+import { Chart, baseAxis, chartText, palette, type ChartHandle } from "./Chart";
 
 const { muted } = chartText();
 const PAIRS = [
@@ -8,6 +9,7 @@ const PAIRS = [
   ["DGS10", "DGS2"],
   ["T10Y2Y", "DGS10"],
   ["VIXCLS", "DGS10"],
+  ["DFII10", "T10YIE"],
 ] as const;
 
 type ReplayPoint = {
@@ -78,8 +80,9 @@ function useQuery<T>(path: string, queryKey: string) {
   return { status, error, data };
 }
 
-function fmt(value: number | null, digits = 2) {
-  return value == null || Number.isNaN(value) ? "—" : value.toFixed(digits);
+function fmt(value: unknown, digits = 2) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return value.toFixed(digits);
 }
 
 function Status({ status, error }: { status: string; error: string }) {
@@ -94,7 +97,7 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const chartHandle = useRef<import("echarts").ECharts | null>(null);
+  const chartHandle = useRef<ChartHandle | null>(null);
   const points = useMemo(() => (query.data?.points ?? []).filter((point) => point.date <= asOf), [query.data, asOf]);
   useEffect(() => {
     setCursor(Math.max(points.length - 1, 0));
@@ -119,7 +122,7 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 28 }],
       toolbox: { feature: { restore: { title: "重置缩放" } } },
       xAxis: { type: "time", ...axis },
-      yAxis: { type: "value", name: "10年收益率变动（百分点）", ...axis },
+      yAxis: { type: "value", name: "10年收益率变动（百分点）", nameGap: 18, ...axis },
       series: [{ name: "10年收益率变动", type: "line", showSymbol: false, data: shown.map((point) => [point.date, point.dgs10_change]) }],
     };
   }, [shown]);
@@ -258,7 +261,8 @@ function Explorer({ asOf, windowSize }: { asOf: string; windowSize: number }) {
       {query.status === "success" && body?.eligible ? (
         <>
           <p className="caption">
-            {String(body.interpretation)} n={String(body.n)}，{String(body.sample_start)} 至 {String(body.sample_end)}。相关 {Number(body.correlation).toFixed(2)}。
+            {String(body.interpretation)} 窗口样本 n={String(body.n)}，{String(body.sample_start)} 至 {String(body.sample_end)}。相关 {Number(body.correlation).toFixed(2)}。
+            滚动相关在完整可见历史上按 63 日计算，再截取最近一段显示。
             {body.mechanical ? " 这是机械关系。" : ""}
           </p>
           <Chart option={option} height={280} />
@@ -314,9 +318,12 @@ function Tails({ asOf }: { asOf: string }) {
 }
 
 function Compare({ asOf }: { asOf: string }) {
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const custom = customStart && customEnd ? `&start=${customStart}&end=${customEnd}` : "";
   const query = useQuery<{ windows: Record<string, unknown>[]; note: string }>(
-    `/api/compare?as_of=${asOf}&windows=taper,calm2017,covid,hike2022`,
-    asOf,
+    `/api/compare?as_of=${asOf}&windows=taper,calm2017,covid,hike2022${custom}`,
+    `${asOf}:${customStart}:${customEnd}`,
   );
   const windows = query.data?.windows ?? [];
   const option = useMemo<EChartsOption>(() => {
@@ -338,6 +345,16 @@ function Compare({ asOf }: { asOf: string }) {
     <section className="panel">
       <h2>危机对照</h2>
       <p className="caption">{query.data?.note}</p>
+      <div className="windows">
+        <label>
+          自选开始
+          <input type="date" value={customStart} max={asOf} onChange={(event) => setCustomStart(event.target.value)} />
+        </label>
+        <label>
+          自选结束
+          <input type="date" value={customEnd} max={asOf} onChange={(event) => setCustomEnd(event.target.value)} />
+        </label>
+      </div>
       <Status status={query.status} error={query.error} />
       {query.status === "success" && windows.length === 0 ? <div className="empty">所选 as_of 之前没有这些事件窗口。</div> : null}
       {query.status === "success" && windows.length > 0 ? (
@@ -401,8 +418,156 @@ function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number })
         >
           导出 CSV
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            download(
+              "quantrisklab-note.tex",
+              [
+                "\\begin{table}[ht]",
+                "\\centering",
+                "\\begin{tabular}{ll}",
+                `as\\_of & ${asOf} \\\\`,
+                `window & ${windowSize} \\\\`,
+                "\\end{tabular}",
+                "\\caption{QuantRiskLab descriptive note. Not a trading result.}",
+                "\\end{table}",
+              ].join("\n"),
+              "text/plain",
+            )
+          }
+        >
+          导出 LaTeX
+        </button>
       </div>
       {message ? <p className="caption">{message}</p> : null}
+    </section>
+  );
+}
+
+export function ResearchMethods({ body }: { body: ResearchPayload | null }) {
+  const decomposition = body?.decomposition;
+  const points = decomposition?.points ?? [];
+  const splitOption = useMemo<EChartsOption>(() => {
+    const axis = baseAxis();
+    return {
+      color: palette,
+      tooltip: { trigger: "axis" },
+      legend: { bottom: 0, textStyle: { color: muted }, type: "scroll" },
+      grid: { left: 12, right: 16, top: 24, bottom: 64, containLabel: true },
+      xAxis: { type: "time", ...axis },
+      yAxis: { type: "value", name: "百分点", nameGap: 18, ...axis },
+      series: [
+        { name: "名义", type: "line", showSymbol: false, data: points.map((point) => [point.date, point.nominal]) },
+        { name: "实际", type: "line", showSymbol: false, data: points.map((point) => [point.date, point.real]) },
+        { name: "盈亏平衡", type: "line", showSymbol: false, data: points.map((point) => [point.date, point.breakeven]) },
+        { name: "残差", type: "line", showSymbol: false, data: points.map((point) => [point.date, point.residual]) },
+      ],
+    };
+  }, [points]);
+  const horizons = body?.local_projection.horizons ?? [];
+  const projectionOption = useMemo<EChartsOption>(() => {
+    const axis = baseAxis();
+    return {
+      color: palette,
+      tooltip: { trigger: "axis" },
+      grid: { left: 12, right: 16, top: 24, bottom: 48, containLabel: true },
+      xAxis: { type: "category", data: horizons.map((item) => `${item.horizon}日`), ...axis },
+      yAxis: { type: "value", name: "系数", nameGap: 18, ...axis },
+      series: [{ type: "bar", data: horizons.map((item) => item.beta ?? null) }],
+    };
+  }, [horizons]);
+  const shares = body?.euler.shares ?? [];
+  const shareOption = useMemo<EChartsOption>(() => {
+    const axis = baseAxis();
+    return {
+      color: palette,
+      tooltip: { trigger: "axis" },
+      grid: { left: 12, right: 16, top: 24, bottom: 48, containLabel: true },
+      xAxis: { type: "category", data: body?.euler.names ?? [], ...axis },
+      yAxis: { type: "value", name: "方差份额", nameGap: 18, ...axis },
+      series: [{ type: "bar", data: shares }],
+    };
+  }, [body?.euler.names, shares]);
+  return (
+    <section className="panel">
+      <h2>利率分解、风险贡献与约化式投影</h2>
+      <p className="caption">{body?.note}</p>
+      {!body ? <div className="empty">这次查询没有带回研究模块。</div> : null}
+      {decomposition?.status === "unavailable" ? <div className="empty">{decomposition.reason}</div> : null}
+      {decomposition?.status === "available" && decomposition.latest ? (
+        <>
+          <p className="caption">
+            {decomposition.latest.date}：名义 {fmt(decomposition.latest.nominal)}，实际 {fmt(decomposition.latest.real)}，盈亏平衡 {fmt(decomposition.latest.breakeven)}，残差 {fmt(decomposition.latest.residual)}。
+            {decomposition.note}
+          </p>
+          <Chart option={splitOption} height={280} />
+        </>
+      ) : null}
+      {decomposition?.dollar?.status === "available" ? (
+        <p className="caption">
+          广义美元指数 {decomposition.dollar.date} 为 {fmt(decomposition.dollar.level)}，63 个观测的水平差 {fmt(decomposition.dollar.change_63)}。{decomposition.dollar.note}
+        </p>
+      ) : (
+        <p className="caption">{decomposition?.dollar?.reason}</p>
+      )}
+      <h3>等权方差贡献</h3>
+      {body?.euler.eligible ? (
+        <>
+          <p className="caption">
+            {body.euler.sample_start} 至 {body.euler.sample_end}，n={body.euler.n}。{body.euler.note}
+          </p>
+          <Chart option={shareOption} height={220} />
+        </>
+      ) : (
+        <div className="empty">{body?.euler.reason ?? "没有方差贡献。"}</div>
+      )}
+      <h3>局部投影</h3>
+      <p className="caption">{body?.local_projection.label}</p>
+      {body?.local_projection.eligible ? <Chart option={projectionOption} height={220} /> : <div className="empty">{body?.local_projection.reason}</div>}
+      <ul>
+        {horizons.map((item) => (
+          <li key={item.horizon}>
+            {item.horizon} 日：{item.eligible ? `系数 ${fmt(item.beta, 3)}，标准误 ${fmt(item.se, 3)}，n=${item.n}` : item.reason}
+          </li>
+        ))}
+      </ul>
+      <h3>信用利差与期货持仓</h3>
+      {body?.funding.status === "available" && body.funding.latest ? (
+        <p className="caption">
+          OAS {body.funding.latest.date} 为 {fmt(body.funding.latest.oas)}，21 个观测变动 {fmt(body.funding.latest.change_21)}，z={fmt(body.funding.latest.zscore)}。{body.funding.note}
+        </p>
+      ) : (
+        <p className="caption">{body?.funding.reason}</p>
+      )}
+      {body?.crowding.status === "unavailable" ? <div className="empty">{body.crowding.reason}</div> : null}
+      {body && body.crowding.markets.length > 0 ? (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>市场</th>
+                <th>观测日</th>
+                <th>发布日</th>
+                <th>净持仓/未平仓</th>
+                <th>z</th>
+              </tr>
+            </thead>
+            <tbody>
+              {body.crowding.markets.map((market) => (
+                <tr key={market.market_id}>
+                  <td>{market.title_zh}</td>
+                  <td>{market.observation_date}</td>
+                  <td>{market.release_date}</td>
+                  <td>{fmt(market.net_over_oi, 3)}</td>
+                  <td>{fmt(market.zscore)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      <p className="caption">{body?.crowding.note}</p>
     </section>
   );
 }
