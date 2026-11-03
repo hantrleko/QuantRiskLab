@@ -48,19 +48,37 @@ export function Chart({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const optionRef = useRef(option);
+  const widthRef = useRef(0);
+  optionRef.current = option;
 
   useEffect(() => {
-    if (!ref.current) {
-      return;
-    }
-    const chart = echarts.init(ref.current, undefined, { renderer: "canvas" });
+    const node = ref.current;
+    if (!node) return;
+    const chart = echarts.init(node, undefined, { renderer: "canvas" });
     chartRef.current = chart;
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
+    const fit = () => {
+      const host = ref.current;
+      const current = chartRef.current;
+      if (!host || !current) return;
+      const width = host.clientWidth;
+      const hostHeight = host.clientHeight;
+      if (width < 2 || hostHeight < 2) return;
+      const revealed = widthRef.current < 2;
+      widthRef.current = width;
+      if (revealed) current.setOption(optionRef.current, true);
+      current.resize({ width, height: hostHeight });
+    };
+    const observer = new ResizeObserver(() => fit());
+    observer.observe(node);
+    window.addEventListener("resize", fit);
+    fit();
     return () => {
-      window.removeEventListener("resize", onResize);
+      observer.disconnect();
+      window.removeEventListener("resize", fit);
       chart.dispose();
       chartRef.current = null;
+      widthRef.current = 0;
     };
   }, []);
 
@@ -68,12 +86,18 @@ export function Chart({
   readyRef.current = onReady;
 
   useEffect(() => {
-    if (!chartRef.current) return;
-    chartRef.current.setOption(option, true);
-    readyRef.current?.(chartRef.current);
+    const chart = chartRef.current;
+    const node = ref.current;
+    if (!chart || !node) return;
+    chart.setOption(option, true);
+    if (node.clientWidth > 1 && node.clientHeight > 1) {
+      widthRef.current = node.clientWidth;
+      chart.resize({ width: node.clientWidth, height: node.clientHeight });
+    }
+    readyRef.current?.(chart);
   }, [option]);
 
-  return <div ref={ref} style={{ height, width: "100%" }} />;
+  return <div ref={ref} className="chart-host" style={{ height, width: "100%" }} />;
 }
 
 export const palette = ["#8fb8c9", "#d4a574", "#9cbfa3", "#d08b8b", "#b7a6d6", "#c7c091"];

@@ -117,7 +117,7 @@ aside h2, article { margin-bottom: 10px; }
 
 .wide { grid-column: 1 / -1; }
 
-.chart { height: 320px; }
+.chart, .chart-host { display: block; width: 100%; min-width: 0; height: 320px; }
 
 .empty { height: 320px; display: grid; place-items: center; color: #9aa292; }
 
@@ -216,11 +216,12 @@ th, td { border-bottom: 1px solid #243024; text-align: left; padding: 6px 4px; v
   border-radius: 8px;
   padding: 14px 16px 16px;
   margin-top: 14px;
+  min-width: 0;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
 }
 
