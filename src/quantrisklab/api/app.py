@@ -30,7 +30,8 @@ from quantrisklab.api.queries import (
 from quantrisklab.logging_setup import setup_logging
 from quantrisklab.pit_clock import availability_catalog, snapshot_status
 from quantrisklab.metrics.structure import structure_payload
-from quantrisklab.research import research_payload
+from quantrisklab.api.workbench import workbench_payload
+from quantrisklab.research import replay_cross_section, research_payload
 from quantrisklab.studio import compare_windows, explore_pair, replay_track, save_experiment, tail_laboratory
 from quantrisklab.paths import DB_PATH, FAILURES_JSON, ROOT
 from quantrisklab.quality.checks import build_quality_report
@@ -331,18 +332,67 @@ def compare(
     return sanitize(payload)
 
 
+def _weights(text: str) -> tuple[float, float]:
+    parts = []
+    for item in text.split(","):
+        if not item:
+            continue
+        try:
+            parts.append(float(item))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="权重必须是数字") from exc
+    if len(parts) != 2 or any(item < 0 for item in parts) or abs(sum(parts) - 1) > 1e-6:
+        raise HTTPException(status_code=422, detail="权重需要两个非负数，并且加总为 1")
+    return parts[0], parts[1]
+
+
 @app.get("/api/research")
-def research(as_of: str | None = None, window: int = Query(default=252, ge=21, le=756)) -> dict:
+def research(
+    as_of: str | None = None,
+    window: int = Query(default=252, ge=21, le=756),
+    weights: str = "0.5,0.5",
+) -> dict:
     day = _day(as_of, date.today())
     assert day is not None
     connection = _db()
     try:
-        payload = research_payload(connection, day, window)
+        payload = research_payload(connection, day, window, _weights(weights))
     except Exception:
         logger.exception("研究计算失败")
         raise
     finally:
         connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/section")
+def section(as_of: str | None = None, window: int = Query(default=63, ge=21, le=252)) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = replay_cross_section(connection, day, window)
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/workbench")
+def workbench(as_of: str | None = None, window: int = Query(default=63, ge=21, le=252)) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = workbench_payload(connection, day, window, date.today())
+    except Exception:
+        logger.exception("工作台聚合失败")
+        raise
+    finally:
+        connection.close()
+    failures = []
+    if FAILURES_JSON.exists():
+        failures = json.loads(FAILURES_JSON.read_text(encoding="utf-8"))
+    payload["failures"] = failures
     return sanitize(payload)
 
 

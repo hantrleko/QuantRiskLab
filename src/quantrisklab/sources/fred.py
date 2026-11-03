@@ -122,6 +122,7 @@ class _HttpResult:
 class FredClient:
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or require_fred_api_key()
+        self.timeout_seconds = 90
 
     def close(self) -> None:
         return None
@@ -151,7 +152,7 @@ class FredClient:
                 headers={"Accept": "application/json", "User-Agent": "QuantRiskLab/0.1 research"},
             )
             try:
-                with urllib.request.urlopen(request, timeout=90) as response:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                     return _HttpResult(response.status, response.read())
             except urllib.error.HTTPError as exc:
                 body = exc.read()
@@ -177,7 +178,7 @@ class FredClient:
                 [
                     curl,
                     "--max-time",
-                    "90",
+                    str(self.timeout_seconds),
                     "-sS",
                     "-A",
                     "QuantRiskLab/0.1 research",

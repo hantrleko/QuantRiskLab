@@ -107,11 +107,24 @@ def build_quality_report(connection: duckdb.DuckDBPyConnection, as_of: date | No
         obs_dates = _dates(present["observation_date"].to_list()) if present.height else []
         start = obs_dates[0].isoformat() if obs_dates else None
         end = obs_dates[-1].isoformat() if obs_dates else None
+        frequency = item["frequency"] or ""
+        if frequency.lower().startswith("month"):
+            freshness_limit = 45
+        elif frequency.lower().startswith("week"):
+            freshness_limit = 14
+        else:
+            freshness_limit = 10
+        lag_days = None if not obs_dates else (as_of - obs_dates[-1]).days
+        stored_stale = bool(item["stale"])
         reports.append(
             {
                 **item,
                 "price_metrics": bool(item["price_metrics"]),
-                "stale": bool(item["stale"]),
+                "stale": stored_stale,
+                "stale_at_build": stored_stale,
+                "lag_days": lag_days,
+                "freshness_limit_days": freshness_limit,
+                "stale_dynamic": lag_days is None or lag_days > freshness_limit,
                 "as_of": as_of.isoformat(),
                 "n_vintage_rows": int(counts[0] or 0),
                 "n_releases": int(counts[1] or 0),

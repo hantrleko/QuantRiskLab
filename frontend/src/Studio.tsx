@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EChartsOption } from "echarts";
-import type { ResearchPayload } from "./api";
+import { fetchResearch, type ResearchPayload } from "./api";
 import { Chart, baseAxis, chartText, palette, type ChartHandle } from "./Chart";
 
 const { muted } = chartText();
@@ -112,6 +112,22 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   }, [playing, points.length, speed]);
   const shown = points.slice(0, cursor + 1);
   const current = shown.at(-1);
+  const [section, setSection] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    if (!current || playing) return;
+    const cursorDate = current.date;
+    let cancelled = false;
+    getJson<Record<string, unknown>>(`/api/section?as_of=${cursorDate}&window=${windowSize}`)
+      .then((body) => {
+        if (!cancelled) setSection(body);
+      })
+      .catch(() => {
+        if (!cancelled) setSection(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [current?.date, playing, windowSize]);
   const option = useMemo<EChartsOption>(() => {
     const axis = baseAxis();
     return {
@@ -209,6 +225,23 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
             回放日 {current?.date ?? "无"}。10年收益率 {fmt(current?.dgs10 ?? null)}，63日变动 {fmt(current?.dgs10_change ?? null)}，VIX {fmt(current?.vix ?? null)}，
             股油相关 {fmt(current?.sp_wti_corr ?? null)}。样本到 {current?.date} 为止。
           </p>
+          <p className="caption">
+            {playing
+              ? "播放时不重复请求截面。"
+              : section && section.as_of === current?.date
+                ? `该日截面：网络${(section.network as { eligible?: boolean; links?: unknown[] } | undefined)?.eligible ? ` ${(section.network as { links?: unknown[] }).links?.length ?? 0} 条边` : "样本不足"}。持仓 ${
+                    ((section.crowding as { markets?: unknown[] } | undefined)?.markets ?? []).length
+                  } 个市场。${String(section.note ?? "")}`
+                : "正在读取该日截面。"}
+          </p>
+          {!playing && section && section.as_of === current?.date
+            ? ((section.revisions as { series_id: string; status: string; note?: string; reason?: string; later_known_at_as_of?: boolean }[] | undefined) ?? []).map((item) => (
+            <p key={item.series_id} className="caption">
+              {item.series_id}：{item.status === "unavailable" ? item.reason : item.note}
+              {item.later_known_at_as_of === false ? " 终值是事后信息。" : ""}
+            </p>
+          ))
+            : null}
           <Chart option={option} onReady={(chart) => { chartHandle.current = chart; }} />
         </>
       ) : null}
@@ -375,6 +408,45 @@ function Compare({ asOf }: { asOf: string }) {
   );
 }
 
+function texNum(value: number | null | undefined, digits = 3): string {
+  if (value == null || Number.isNaN(value)) return "--";
+  return value.toFixed(digits);
+}
+
+function booktabs(asOf: string, windowSize: number, research: ResearchPayload): string {
+  const lines = [
+    "\\begin{table}[ht]",
+    "\\centering",
+    "\\begin{tabular}{lrrrr}",
+    "\\toprule",
+    "Horizon or item & estimate & se & low & high \\\\",
+    "\\midrule",
+  ];
+  for (const item of research.local_projection.horizons) {
+    if (!item.eligible || item.beta == null) continue;
+    lines.push(
+      `${item.horizon}d & ${texNum(item.beta)} & ${texNum(item.se)} & ${texNum(item.ci95?.[0])} & ${texNum(item.ci95?.[1])} \\\\`,
+    );
+  }
+  if (research.euler.eligible) {
+    (research.euler.names ?? []).forEach((name, index) => {
+      const shrunk = research.euler.shrinkage?.shares?.[index];
+      lines.push(`${name} share & ${texNum(research.euler.shares?.[index], 4)} & ${texNum(shrunk, 4)} & & \\\\`);
+    });
+  }
+  const oil = research.covar?.equity_on_oil;
+  const yieldChange = research.covar?.equity_on_yield_change;
+  if (oil?.eligible) lines.push(`delta CoVaR oil & ${texNum(oil.delta_covar, 4)} & & & \\\\`);
+  if (yieldChange?.eligible) lines.push(`delta CoVaR yield & ${texNum(yieldChange.delta_covar, 4)} & & & \\\\`);
+  lines.push("\\bottomrule");
+  lines.push("\\end{tabular}");
+  lines.push(
+    `\\caption{QuantRiskLab as-of ${asOf}, window ${windowSize}. Reduced form. Not a trading result and not a causal estimate.}`,
+  );
+  lines.push("\\end{table}");
+  return lines.join("\n");
+}
+
 function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   const [message, setMessage] = useState("");
   async function save() {
@@ -420,22 +492,15 @@ function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number })
         </button>
         <button
           type="button"
-          onClick={() =>
-            download(
-              "quantrisklab-note.tex",
-              [
-                "\\begin{table}[ht]",
-                "\\centering",
-                "\\begin{tabular}{ll}",
-                `as\\_of & ${asOf} \\\\`,
-                `window & ${windowSize} \\\\`,
-                "\\end{tabular}",
-                "\\caption{QuantRiskLab descriptive note. Not a trading result.}",
-                "\\end{table}",
-              ].join("\n"),
-              "text/plain",
-            )
-          }
+          onClick={() => {
+            void fetchResearch(asOf, windowSize)
+              .then((research) => {
+                const tex = booktabs(asOf, windowSize, research);
+                download("quantrisklab-note.tex", tex, "text/plain");
+                setMessage("已导出当前查询的描述性结果。");
+              })
+              .catch((exc: unknown) => setMessage(exc instanceof Error ? exc.message : "导出失败"));
+          }}
         >
           导出 LaTeX
         </button>
@@ -445,15 +510,30 @@ function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number })
   );
 }
 
-export function ResearchMethods({ body }: { body: ResearchPayload | null }) {
-  const decomposition = body?.decomposition;
+export function ResearchMethods({
+  body,
+  asOf,
+  windowSize,
+}: {
+  body: ResearchPayload | null;
+  asOf: string;
+  windowSize: number;
+}) {
+  const [override, setOverride] = useState<ResearchPayload | null>(null);
+  const [equityWeight, setEquityWeight] = useState(0.5);
+  const [weightError, setWeightError] = useState("");
+  useEffect(() => {
+    setOverride(null);
+  }, [body]);
+  const view = override ?? body;
+  const decomposition = view?.decomposition;
   const points = decomposition?.points ?? [];
   const splitOption = useMemo<EChartsOption>(() => {
     const axis = baseAxis();
     return {
       color: palette,
       tooltip: { trigger: "axis" },
-      legend: { bottom: 0, textStyle: { color: muted }, type: "scroll" },
+      legend: { bottom: 0, textStyle: { color: muted } },
       grid: { left: 12, right: 16, top: 24, bottom: 64, containLabel: true },
       xAxis: { type: "time", ...axis },
       yAxis: { type: "value", name: "百分点", nameGap: 18, ...axis },
@@ -465,35 +545,46 @@ export function ResearchMethods({ body }: { body: ResearchPayload | null }) {
       ],
     };
   }, [points]);
-  const horizons = body?.local_projection.horizons ?? [];
+  const horizons = view?.local_projection.horizons ?? [];
   const projectionOption = useMemo<EChartsOption>(() => {
     const axis = baseAxis();
+    const ready = horizons.filter((item) => item.eligible && item.beta != null);
     return {
       color: palette,
       tooltip: { trigger: "axis" },
-      grid: { left: 12, right: 16, top: 24, bottom: 48, containLabel: true },
-      xAxis: { type: "category", data: horizons.map((item) => `${item.horizon}日`), ...axis },
+      legend: { bottom: 0, textStyle: { color: muted } },
+      grid: { left: 12, right: 16, top: 24, bottom: 64, containLabel: true },
+      xAxis: { type: "category", data: ready.map((item) => `${item.horizon}`), ...axis },
       yAxis: { type: "value", name: "系数", nameGap: 18, ...axis },
-      series: [{ type: "bar", data: horizons.map((item) => item.beta ?? null) }],
+      series: [
+        { name: "系数", type: "line", data: ready.map((item) => item.beta ?? null) },
+        { name: "95% 下沿", type: "line", data: ready.map((item) => item.ci95?.[0] ?? null) },
+        { name: "95% 上沿", type: "line", data: ready.map((item) => item.ci95?.[1] ?? null) },
+      ],
     };
   }, [horizons]);
-  const shares = body?.euler.shares ?? [];
+  const shares = view?.euler.shares ?? [];
+  const shrunkShares = view?.euler.shrinkage?.shares ?? [];
   const shareOption = useMemo<EChartsOption>(() => {
     const axis = baseAxis();
     return {
       color: palette,
       tooltip: { trigger: "axis" },
-      grid: { left: 12, right: 16, top: 24, bottom: 48, containLabel: true },
-      xAxis: { type: "category", data: body?.euler.names ?? [], ...axis },
+      legend: { bottom: 0, textStyle: { color: muted } },
+      grid: { left: 12, right: 16, top: 24, bottom: 64, containLabel: true },
+      xAxis: { type: "category", data: view?.euler.names ?? [], ...axis },
       yAxis: { type: "value", name: "方差份额", nameGap: 18, ...axis },
-      series: [{ type: "bar", data: shares }],
+      series: [
+        { name: "样本协方差", type: "bar", data: shares },
+        { name: "收缩协方差", type: "bar", data: shrunkShares },
+      ],
     };
-  }, [body?.euler.names, shares]);
+  }, [view?.euler.names, shares, shrunkShares]);
   return (
     <section className="panel">
       <h2>利率分解、风险贡献与约化式投影</h2>
-      <p className="caption">{body?.note}</p>
-      {!body ? <div className="empty">这次查询没有带回研究模块。</div> : null}
+      <p className="caption">{view?.note}</p>
+      {!view ? <div className="empty">这次查询没有带回研究模块。</div> : null}
       {decomposition?.status === "unavailable" ? <div className="empty">{decomposition.reason}</div> : null}
       {decomposition?.status === "available" && decomposition.latest ? (
         <>
@@ -511,37 +602,81 @@ export function ResearchMethods({ body }: { body: ResearchPayload | null }) {
       ) : (
         <p className="caption">{decomposition?.dollar?.reason}</p>
       )}
-      <h3>等权方差贡献</h3>
-      {body?.euler.eligible ? (
+      <h3>方差贡献</h3>
+      <div className="windows">
+        <label>
+          标普权重
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            value={equityWeight}
+            onChange={(event) => setEquityWeight(Number(event.target.value))}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            const equity = Math.round(equityWeight * 1000) / 1000;
+            const oil = Math.round((1 - equity) * 1000) / 1000;
+            if (equity < 0 || oil < 0 || Math.abs(equity + oil - 1) > 1e-6) {
+              setWeightError("权重不能为负，并且需要加总为 1");
+              return;
+            }
+            setWeightError("");
+            void fetchResearch(asOf, windowSize, `${equity},${oil}`)
+              .then(setOverride)
+              .catch((exc: unknown) => setWeightError(exc instanceof Error ? exc.message : "权重查询失败"));
+          }}
+        >
+          按该权重重算
+        </button>
+      </div>
+      {weightError ? <div className="warn">{weightError}</div> : null}
+      {view?.euler.eligible ? (
         <>
           <p className="caption">
-            {body.euler.sample_start} 至 {body.euler.sample_end}，n={body.euler.n}。{body.euler.note}
+            权重 {view.euler.weights?.map((item) => item.toFixed(2)).join(" / ")}。{view.euler.sample_start} 至 {view.euler.sample_end}，n={view.euler.n}。
+            收缩强度 {fmt(view.euler.shrinkage?.intensity, 3)}。{view.euler.note}
           </p>
           <Chart option={shareOption} height={220} />
         </>
       ) : (
-        <div className="empty">{body?.euler.reason ?? "没有方差贡献。"}</div>
+        <div className="empty">{view?.euler.reason ?? "没有方差贡献。"}</div>
       )}
       <h3>局部投影</h3>
-      <p className="caption">{body?.local_projection.label}</p>
-      {body?.local_projection.eligible ? <Chart option={projectionOption} height={220} /> : <div className="empty">{body?.local_projection.reason}</div>}
+      <p className="caption">
+        {view?.local_projection.label}
+        {view?.local_projection.controls?.length ? ` 控制变量：${view.local_projection.controls.join("、")}。` : ""}
+      </p>
+      {view?.local_projection.eligible ? <Chart option={projectionOption} height={260} /> : <div className="empty">{view?.local_projection.reason}</div>}
       <ul>
         {horizons.map((item) => (
           <li key={item.horizon}>
-            {item.horizon} 日：{item.eligible ? `系数 ${fmt(item.beta, 3)}，标准误 ${fmt(item.se, 3)}，n=${item.n}` : item.reason}
+            {item.horizon} 日：
+            {item.eligible
+              ? `系数 ${fmt(item.beta, 3)}，标准误 ${fmt(item.se, 3)}，95% 区间 ${fmt(item.ci95?.[0], 3)} 至 ${fmt(item.ci95?.[1], 3)}，n=${item.n}`
+              : item.reason}
           </li>
         ))}
       </ul>
+      <h3>条件分位数差值</h3>
+      <p className="caption">{view?.covar?.note} {view?.covar?.equity_on_oil.label}</p>
+      <p className="caption">
+        标普对原油：{view?.covar?.equity_on_oil.eligible ? fmt(view.covar.equity_on_oil.delta_covar, 4) : view?.covar?.equity_on_oil.reason ?? "没有结果"}。
+        标普对 10 年收益率变动：{view?.covar?.equity_on_yield_change.eligible ? fmt(view.covar.equity_on_yield_change.delta_covar, 4) : view?.covar?.equity_on_yield_change.reason ?? "没有结果"}。
+      </p>
       <h3>信用利差与期货持仓</h3>
-      {body?.funding.status === "available" && body.funding.latest ? (
+      {view?.funding.status === "available" && view.funding.latest ? (
         <p className="caption">
-          OAS {body.funding.latest.date} 为 {fmt(body.funding.latest.oas)}，21 个观测变动 {fmt(body.funding.latest.change_21)}，z={fmt(body.funding.latest.zscore)}。{body.funding.note}
+          OAS {view.funding.latest.date} 为 {fmt(view.funding.latest.oas)}，21 个观测变动 {fmt(view.funding.latest.change_21)}，z={fmt(view.funding.latest.zscore)}。{view.funding.note}
         </p>
       ) : (
-        <p className="caption">{body?.funding.reason}</p>
+        <p className="caption">{view?.funding.reason}</p>
       )}
-      {body?.crowding.status === "unavailable" ? <div className="empty">{body.crowding.reason}</div> : null}
-      {body && body.crowding.markets.length > 0 ? (
+      {view?.crowding.status === "unavailable" ? <div className="empty">{view.crowding.reason}</div> : null}
+      {view && view.crowding.markets.length > 0 ? (
         <div className="table-scroll">
           <table>
             <thead>
@@ -554,7 +689,7 @@ export function ResearchMethods({ body }: { body: ResearchPayload | null }) {
               </tr>
             </thead>
             <tbody>
-              {body.crowding.markets.map((market) => (
+              {view.crowding.markets.map((market) => (
                 <tr key={market.market_id}>
                   <td>{market.title_zh}</td>
                   <td>{market.observation_date}</td>
@@ -567,7 +702,17 @@ export function ResearchMethods({ body }: { body: ResearchPayload | null }) {
           </table>
         </div>
       ) : null}
-      <p className="caption">{body?.crowding.note}</p>
+      <p className="caption">{view?.crowding.note}</p>
+      <h3>修订差</h3>
+      <ul>
+        {(view?.revisions ?? []).map((item) => (
+          <li key={item.series_id}>
+            {item.series_id}：{item.status === "unavailable" ? item.reason : item.note}
+            {item.revised_count != null ? ` 有差异的观测 ${item.revised_count} 个。` : ""}
+            {item.later_known_at_as_of === false ? " 终版发布日晚于 as_of，回放当日看不到。" : ""}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

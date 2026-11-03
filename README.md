@@ -1,10 +1,10 @@
-# QuantRiskLab V1.0
+# QuantRiskLab V2.0
 
 时点宏观与风险研究工作台。它读取真实的公开数据，在给定日期 `as_of` 上只展示当时已经发布的观测，并计算少量可复核的风险描述统计。
 
-本平台不提供买卖建议，也不报告策略收益。V1.0 在已验收的计算上增加利率分解、等权方差贡献、约化式局部投影和持仓摘要。序列没有入库时，对应结果留空。
+本平台不提供买卖建议，也不报告策略收益。V2.0 在已验收的计算上增加带置信区间的约化式局部投影、收缩协方差、描述性 CoVaR 差值和回放当日截面。序列没有入库时，对应结果留空。
 
-新增三条 FRED 序列时运行 `uv run python scripts/extend_v1_series.py`。它只写入实际返回的观测。黄金上午定盘价和 UNRATE vintage 仍然是缺口。
+补 OAS、UNRATE vintage、CFTC 历史年和一次黄金下午定盘价尝试时，运行 `uv run python scripts/extend_v11.py`。它只写入实际返回的观测。
 
 ## 环境
 
@@ -21,7 +21,7 @@ cd F:\projects\QuantRiskLab
 uv run python scripts/build_cached_v0.py
 ```
 
-`scripts/build_cached_v0.py` 只读取已经保存在 `data/raw` 的文件，不会重新请求 FRED。WTI、标普 500、公司债 OAS 和 CPI vintage 若已有本地文件，会在这次建库时入库。黄金上午定盘价、黄金下午定盘价和 UNRATE vintage 仍是缺口，不要为了补齐而反复重跑。
+`scripts/build_cached_v0.py` 只读取已经保存在 `data/raw` 的文件，不会重新请求 FRED。WTI、标普 500、公司债 OAS 和 CPI vintage 若已有本地文件，会在这次建库时入库。要补 OAS 历史、UNRATE vintage、CFTC 年报或黄金下午定盘价，只运行一次 `scripts/extend_v11.py`。失败的序列保持缺口。
 
 如果没有设置环境变量，程序会从 `F:\AI\API` 里文件名包含 fred 的本地文件读取一次，并只注入当前进程的 `FRED_API_KEY`。密钥不会打印，也不会写入代码或 manifest。
 

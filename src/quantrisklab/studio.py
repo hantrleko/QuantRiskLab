@@ -140,7 +140,7 @@ def explore_pair(connection, as_of: date, left: str, right: str, window: int) ->
         right_values = _transform(frames[right], right, TRANSFORMS[right])
     except ValueError as exc:
         return {"eligible": False, "reason": str(exc), "as_of": as_of.isoformat()}
-    paired_all = pd.concat([left_values.rename("left"), right_values.rename("right")], axis=1).dropna()
+    paired_all = pd.concat([left_values.rename("left"), right_values.rename("right")], axis=1, sort=True).dropna()
     if len(paired_all) < 20:
         return {"eligible": False, "reason": "重叠样本少于 20", "n": int(len(paired_all)), "as_of": as_of.isoformat()}
     paired = paired_all.iloc[-window:] if len(paired_all) > window else paired_all

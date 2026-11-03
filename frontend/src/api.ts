@@ -35,6 +35,8 @@ export type QualityRow = {
   start: string | null;
   end: string | null;
   stale: boolean;
+  stale_dynamic?: boolean;
+  lag_days?: number | null;
   pit_mode: string;
 };
 
@@ -254,13 +256,31 @@ export type ResearchPayload = {
     note?: string;
     sample_start?: string;
     sample_end?: string;
+    shrinkage?: { intensity: number; shares: number[]; variance: number; note?: string };
   };
   local_projection: {
     eligible: boolean;
     label: string;
     reason?: string | null;
-    horizons: { horizon: number; eligible: boolean; beta?: number; se?: number; n?: number; pvalue?: number; reason?: string }[];
+    controls?: string[];
+    horizons: {
+      horizon: number;
+      eligible: boolean;
+      beta?: number;
+      se?: number;
+      n?: number;
+      pvalue?: number;
+      ci95?: [number, number];
+      controls?: string[];
+      reason?: string;
+    }[];
   };
+  covar?: {
+    note?: string;
+    equity_on_oil: { eligible: boolean; reason?: string; delta_covar?: number; n?: number; label?: string };
+    equity_on_yield_change: { eligible: boolean; reason?: string; delta_covar?: number; n?: number; label?: string };
+  };
+  revisions?: { series_id: string; status: string; reason?: string; revised_count?: number; later_known_at_as_of?: boolean; note?: string }[];
   crowding: {
     status: string;
     reason?: string | null;
@@ -283,6 +303,27 @@ export type ResearchPayload = {
   };
 };
 
-export function fetchResearch(asOf: string, window: number) {
-  return getJson<ResearchPayload>(`/api/research?as_of=${asOf}&window=${window}`);
+export function fetchResearch(asOf: string, window: number, weights = "0.5,0.5") {
+  return getJson<ResearchPayload>(`/api/research?as_of=${asOf}&window=${window}&weights=${weights}`);
+}
+
+export type WorkbenchPayload = {
+  as_of: string;
+  catalog: { series: SeriesMeta[] };
+  snapshot: SnapshotInfo;
+  availability: { series: AvailabilityRow[] };
+  quality: QualityRow[];
+  failures: FailureRow[];
+  heatmap: Awaited<ReturnType<typeof fetchHeatmap>>;
+  correlation: Awaited<ReturnType<typeof fetchCorrelation>>;
+  positions: { series: PositionSeries[]; caveat: string };
+  structure: StructurePayload;
+  research: ResearchPayload;
+  series: Record<string, Observation[]>;
+  latest_macro: Record<string, Observation[]>;
+  metrics: Awaited<ReturnType<typeof fetchMetrics>>[];
+};
+
+export function fetchWorkbench(asOf: string, window: number) {
+  return getJson<WorkbenchPayload>(`/api/workbench?as_of=${asOf}&window=${window}`);
 }

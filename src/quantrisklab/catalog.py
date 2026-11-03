@@ -91,7 +91,7 @@ FRED_SLOTS: list[dict] = [
     },
     {
         "slot": "gold",
-        "candidates": ["GOLDAMGBD228NLBM"],
+        "candidates": ["GOLDAMGBD228NLBM", "GOLDPMGBD228NLBM"],
         "role": "price",
         "title_zh": "伦敦金价",
         "price_metrics": True,

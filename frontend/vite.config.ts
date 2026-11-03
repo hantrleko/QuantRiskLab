@@ -17,4 +17,14 @@ export default defineConfig({
     strictPort: true,
     proxy: { "/api": api, "/health": api },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/react-dom") || id.includes("node_modules/react/")) return "react";
+          if (id.includes("node_modules/echarts") || id.includes("node_modules/zrender")) return "echarts";
+        },
+      },
+    },
+  },
 });

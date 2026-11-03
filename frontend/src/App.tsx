@@ -1,17 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { EChartsOption } from "echarts";
 import {
-  fetchCatalog,
   fetchCorrelation,
   fetchHeatmap,
   fetchMetrics,
-  fetchPositions,
-  fetchQuality,
-  fetchAvailability,
-  fetchSeries,
-  fetchSnapshot,
-  fetchResearch,
-  fetchStructure,
+  fetchWorkbench,
   type FailureRow,
   type HeatRow,
   type MatrixBlock,
@@ -25,7 +18,8 @@ import {
   type StructurePayload,
 } from "./api";
 import { Chart, baseAxis, chartText, palette } from "./Chart";
-import { ResearchMethods, Studio } from "./Studio";
+const Studio = lazy(() => import("./Studio").then((mod) => ({ default: mod.Studio })));
+const ResearchMethods = lazy(() => import("./Studio").then((mod) => ({ default: mod.ResearchMethods })));
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const { muted } = chartText();
@@ -170,36 +164,23 @@ export function App() {
     setLatestMacro({});
     async function load() {
       try {
-        const [catalogBody, snapshotBody, availabilityBody] = await Promise.all([
-          fetchCatalog(),
-          fetchSnapshot(),
-          fetchAvailability(),
-        ]);
+        const workbench = await fetchWorkbench(queryAsOf, queryWindow);
         if (requestSerial.current !== requestId) return;
-        const datasets = catalogBody.series;
-        setCatalog(datasets);
-        setSnapshot(snapshotBody);
-        setAvailability(availabilityBody.series);
-        const priceIds = datasets.filter((item) => item.price_metrics).map((item) => item.series_id);
-        const macroIds = datasets.filter((item) => item.role === "macro").map((item) => item.series_id);
-        const levelIds = datasets
-          .filter((item) => ["yield", "spread", "volatility_index", "macro"].includes(item.role))
-          .map((item) => item.series_id);
-        const [qualityBody, heatmapBody, correlationBody, positionBody, structureBody, seriesBodies, latestBodies, metricBodies] =
-          await Promise.all([
-            fetchQuality(queryAsOf),
-            fetchHeatmap(queryAsOf),
-            fetchCorrelation(queryAsOf, queryWindow),
-            fetchPositions(queryAsOf),
-            fetchStructure(queryAsOf, queryWindow),
-            Promise.all(levelIds.map(async (id) => [id, (await fetchSeries(id, queryAsOf)).observations] as const)),
-            Promise.all(macroIds.map(async (id) => [id, (await fetchSeries(id, TODAY)).observations] as const)),
-            Promise.all(priceIds.map((id) => fetchMetrics(id, queryAsOf, queryWindow))),
-          ]);
-        if (requestSerial.current !== requestId) return;
-        if (structureBody.as_of !== queryAsOf || heatmapBody.as_of !== queryAsOf) {
+        if (workbench.as_of !== queryAsOf || workbench.structure.as_of !== queryAsOf || workbench.heatmap.as_of !== queryAsOf) {
           throw new Error("返回结果的 as_of 与当前查询不一致");
         }
+        const datasets = workbench.catalog.series;
+        setCatalog(datasets);
+        setSnapshot(workbench.snapshot);
+        setAvailability(workbench.availability.series);
+        const seriesBodies = Object.entries(workbench.series);
+        const latestBodies = Object.entries(workbench.latest_macro);
+        const qualityBody = { series: workbench.quality, failures: workbench.failures };
+        const heatmapBody = workbench.heatmap;
+        const correlationBody = workbench.correlation;
+        const positionBody = workbench.positions;
+        const structureBody = workbench.structure;
+        const metricBodies = workbench.metrics;
         const visibleSeries = seriesBodies.map(
           ([id, observations]) =>
             [id, observations.filter((point) => point.observation_date <= queryAsOf && point.release_date <= queryAsOf)] as const,
@@ -235,15 +216,7 @@ export function App() {
         setLatestMacro(Object.fromEntries(latestBodies));
         setMetrics(metricBodies);
         setStructure(structureVisible);
-        let researchBody: ResearchPayload | null = null;
-        try {
-          researchBody = await fetchResearch(queryAsOf, queryWindow);
-          if (researchBody.as_of !== queryAsOf) researchBody = null;
-        } catch {
-          researchBody = null;
-        }
-        if (requestSerial.current !== requestId) return;
-        setResearch(researchBody);
+        setResearch(workbench.research.as_of === queryAsOf ? workbench.research : null);
         const hasVisible = visibleCount > 0 || qualityBody.series.some((row) => row.n_visible > 0);
         setStatus(hasVisible ? "success" : "empty");
       } catch (exc) {
@@ -428,7 +401,7 @@ export function App() {
     <div className="page" data-page={page} data-status={status} data-committed={status === "loading" ? "" : asOf}>
       <header>
         <div>
-          <div className="kicker">QuantRiskLab · V1.0</div>
+          <div className="kicker">QuantRiskLab · V2.0</div>
           <h1>宏观与风险研究工作台</h1>
           <p className="sub">图上的点都来自本地库里的公开观测。没有序列时留空，不用假数据补。</p>
         </div>
@@ -469,7 +442,7 @@ export function App() {
       </header>
       <div className="note">
         利率、利差和 VIX 按水平展示，不换算成债券收益。收益、实现波动率、回撤、历史模拟 VaR 和 Expected Shortfall 只用于价格或价格指数。
-        V1.0 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。
+        V2.0 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。
       </div>
       <nav className="windows" aria-label="工作区">
         {(
@@ -526,10 +499,12 @@ export function App() {
       {status === "empty" ? (
         <div className="empty">截至 {asOf} 没有可见观测。这是无数据状态，不是上一次查询留下的图。</div>
       ) : null}
-      {page === "replay" || page === "explore" || page === "tails" || page === "compare" || page === "export" ? (
-        <Studio mode={page} asOf={asOf} windowSize={windowSize} />
-      ) : null}
-      {page === "research" ? <ResearchMethods body={research} /> : null}
+      <Suspense fallback={<div className="note">正在打开这个工作区。</div>}>
+        {page === "replay" || page === "explore" || page === "tails" || page === "compare" || page === "export" ? (
+          <Studio mode={page} asOf={asOf} windowSize={windowSize} />
+        ) : null}
+        {page === "research" ? <ResearchMethods body={research} asOf={asOf} windowSize={windowSize} /> : null}
+      </Suspense>
 
       <section className="panel result only-overview only-research">
         <h2>利率快速变化时的风险结构</h2>
@@ -694,7 +669,7 @@ export function App() {
       <section className="panel only-audit">
         <h2>数据质量</h2>
         <p className="caption">
-          可见起止是这次 as_of 下的观测日期，不是公布时刻。新鲜度是快照建库时写入的，不会在部署后自动刷新。date_approximate 表示只有日期近似，没有精确公布时刻。
+          可见起止是这次 as_of 下的观测日期，不是公布时刻。新鲜度是 as_of 与最后可见观测日的间隔，日频超过 10 天、周频超过 14 天、月频超过 45 天记为滞后。date_approximate 表示只有日期近似，没有精确公布时刻。
         </p>
         <div className="table-scroll">
           <table>
@@ -737,7 +712,7 @@ export function App() {
                   <td>{row.n_vintage_rows}</td>
                   <td>{row.revised_observations}</td>
                   <td>{row.release_before_observation}</td>
-                  <td>{row.stale ? "建库时已滞后" : "建库时仍在更新窗口"}</td>
+                  <td>{row.lag_days == null ? "无可见观测" : `${row.stale_dynamic ? "滞后" : "间隔"} ${row.lag_days} 天`}</td>
                   <td>
                     {qualityLabel(availability.find((item) => item.series_id === row.series_id)?.availability_quality)}
                     <br />
@@ -780,7 +755,7 @@ export function App() {
 
       <footer>
         <p>数据来自 FRED、ALFRED 与 CFTC 的公开序列，经本地计算后展示。FRED 与圣路易斯联储不为本应用背书。第三方指数和商品价格另有其来源条款。这不是投资建议。</p>
-        <p>V1.0 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。</p>
+        <p>V2.0 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。</p>
         <p>以后若做回测，必须同时报告 walk-forward、费用、参数敏感性、基准和样本外结果。</p>
         <p>
           as_of = {asOf}。相关窗口 = {windowSize} 个观测。

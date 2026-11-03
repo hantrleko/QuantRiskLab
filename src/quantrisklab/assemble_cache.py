@@ -35,12 +35,17 @@ logger = logging.getLogger("quantrisklab.assemble")
 CACHED_SERIES = ("DGS2", "DGS10", "DFF", "T10Y2Y", "VIXCLS")
 # These files are already on disk. Read them. Do not request FRED again.
 EXTRA_LOCAL_FRED = ("DCOILWTICO", "SP500", "BAMLC0A0CM", "DFII10", "T10YIE", "DTWEXBGS")
-CFTC_LOCAL = (
-    ("disagg", "fut_disagg_txt_2025.zip", "https://www.cftc.gov/files/dea/history/fut_disagg_txt_2025.zip"),
-    ("disagg", "fut_disagg_txt_2026.zip", "https://www.cftc.gov/files/dea/history/fut_disagg_txt_2026.zip"),
-    ("tff", "fut_fin_txt_2025.zip", "https://www.cftc.gov/files/dea/history/fut_fin_txt_2025.zip"),
-    ("tff", "fut_fin_txt_2026.zip", "https://www.cftc.gov/files/dea/history/fut_fin_txt_2026.zip"),
+CFTC_LOCAL = tuple(
+    (
+        family,
+        f"{prefix}_{year}.zip",
+        f"https://www.cftc.gov/files/dea/history/{prefix}_{year}.zip",
+    )
+    for year in range(2018, 2027)
+    for family, prefix in (("disagg", "fut_disagg_txt"), ("tff", "fut_fin_txt"))
 )
+
+
 def _slot(series_id: str) -> dict:
     for slot in FRED_SLOTS:
         if series_id in slot["candidates"]:
@@ -355,12 +360,20 @@ def assemble_cached() -> int:
         slot = _slot(series_id)
         bundle = _bundle_from_cache(slot, series_id, "fred", "fred", "observation_date")
         _accept_bundle(frames, meta_rows, records, slot, bundle, "fred", "observation_date")
-        if series_id == "BAMLC0A0CM":
-            meta_rows[-1]["notes"] += " 本地文件从 2023-10-10 开始，不是 2010 年以来的全样本。本次不补请求。"
+        if series_id == "BAMLC0A0CM" and bundle["first"] is not None and str(bundle["first"]) > "2010-06-01":
+            meta_rows[-1]["notes"] += f" 本地文件从 {bundle['first']} 开始，短于 2010 年请求起点。"
         if series_id == "SP500":
             meta_rows[-1]["notes"] += " 本地 SP500 文件从 2016-10-13 起，短于其他日频序列。本次不补请求。"
         ingested.append(series_id)
         logger.info("local fred %s rows=%s %s -> %s", series_id, bundle["frame"].height, bundle["first"], bundle["last"])
+    if _cached_pages("GOLDPMGBD228NLBM", "fred"):
+        gold_slot = _slot("GOLDPMGBD228NLBM")
+        gold_bundle = _bundle_from_cache(gold_slot, "GOLDPMGBD228NLBM", "fred", "fred", "observation_date")
+        _accept_bundle(frames, meta_rows, records, gold_slot, gold_bundle, "fred", "observation_date")
+        meta_rows[-1]["title_zh"] = "伦敦金下午定盘价"
+        meta_rows[-1]["notes"] += " 上午定盘价没有可用观测。入库的是下午定盘价，只覆盖实际返回的样本。"
+        ingested.append("GOLDPMGBD228NLBM")
+        logger.info("local gold %s rows=%s", "GOLDPMGBD228NLBM", gold_bundle["frame"].height)
     failures.extend(_gold_gaps())
     alfred_frames, alfred_meta, alfred_records, alfred_failures = _local_alfred()
     frames.extend(alfred_frames)
