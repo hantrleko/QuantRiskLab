@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from quantrisklab import __version__
 from quantrisklab.api.queries import (
@@ -28,6 +28,7 @@ from quantrisklab.api.queries import (
     vintage_dates,
 )
 from quantrisklab.logging_setup import setup_logging
+from quantrisklab.note import note_document
 from quantrisklab.pit_clock import availability_catalog, snapshot_status
 from quantrisklab.metrics.structure import structure_payload
 from quantrisklab.api.workbench import workbench_payload
@@ -394,6 +395,26 @@ def workbench(as_of: str | None = None, window: int = Query(default=63, ge=21, l
         failures = json.loads(FAILURES_JSON.read_text(encoding="utf-8"))
     payload["failures"] = failures
     return sanitize(payload)
+
+
+@app.get("/api/note")
+def note(as_of: str | None = None, window: int = Query(default=63), format: str = "csv") -> Response:
+    if window not in (63, 126, 252):
+        raise HTTPException(status_code=422, detail="窗口只接受 63、126 或 252")
+    if format not in {"csv", "md", "tex"}:
+        raise HTTPException(status_code=422, detail="格式只接受 csv、md 或 tex")
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = research_payload(connection, day, window)
+    except Exception:
+        logger.exception("研究记录导出失败")
+        raise
+    finally:
+        connection.close()
+    body, media, filename = note_document(sanitize(payload), window, format)
+    return Response(content=body.encode("utf-8"), media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.post("/api/experiments")

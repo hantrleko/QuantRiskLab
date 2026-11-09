@@ -408,45 +408,6 @@ function Compare({ asOf }: { asOf: string }) {
   );
 }
 
-function texNum(value: number | null | undefined, digits = 3): string {
-  if (value == null || Number.isNaN(value)) return "--";
-  return value.toFixed(digits);
-}
-
-function booktabs(asOf: string, windowSize: number, research: ResearchPayload): string {
-  const lines = [
-    "\\begin{table}[ht]",
-    "\\centering",
-    "\\begin{tabular}{lrrrr}",
-    "\\toprule",
-    "Horizon or item & estimate & se & low & high \\\\",
-    "\\midrule",
-  ];
-  for (const item of research.local_projection.horizons) {
-    if (!item.eligible || item.beta == null) continue;
-    lines.push(
-      `${item.horizon}d & ${texNum(item.beta)} & ${texNum(item.se)} & ${texNum(item.ci95?.[0])} & ${texNum(item.ci95?.[1])} \\\\`,
-    );
-  }
-  if (research.euler.eligible) {
-    (research.euler.names ?? []).forEach((name, index) => {
-      const shrunk = research.euler.shrinkage?.shares?.[index];
-      lines.push(`${name} share & ${texNum(research.euler.shares?.[index], 4)} & ${texNum(shrunk, 4)} & & \\\\`);
-    });
-  }
-  const oil = research.covar?.equity_on_oil;
-  const yieldChange = research.covar?.equity_on_yield_change;
-  if (oil?.eligible) lines.push(`delta CoVaR oil & ${texNum(oil.delta_covar, 4)} & & & \\\\`);
-  if (yieldChange?.eligible) lines.push(`delta CoVaR yield & ${texNum(yieldChange.delta_covar, 4)} & & & \\\\`);
-  lines.push("\\bottomrule");
-  lines.push("\\end{tabular}");
-  lines.push(
-    `\\caption{QuantRiskLab as-of ${asOf}, window ${windowSize}. Reduced form. Not a trading result and not a causal estimate.}`,
-  );
-  lines.push("\\end{table}");
-  return lines.join("\n");
-}
-
 function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   const [message, setMessage] = useState("");
   async function save() {
@@ -469,41 +430,35 @@ function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number })
   return (
     <section className="panel">
       <h2>研究实验与导出</h2>
-      <p className="caption">记录只写在本机 data/experiments，不作为公开原始数据发布。导出的摘要包含快照、方法和限制。</p>
+      <p className="caption">
+        记录只写在本机 data/experiments，不作为公开原始数据发布。CSV、Markdown 和 LaTeX 使用这次 as_of 与窗口的同一张描述性表。样本不足的期限不填系数。
+      </p>
       <div className="windows">
         <button type="button" onClick={() => void save()}>保存当前实验</button>
-        <button
-          type="button"
-          onClick={() =>
-            download(
-              "quantrisklab-note.md",
-              `# QuantRiskLab 研究摘要\n\n- as_of: ${asOf}\n- window: ${windowSize}\n- 方法: 已验收的简单收益、差分、有限样本 coexceedance 与 lift\n- 限制: 不是因果传染，不是交易建议。非正价格不计算复合收益。\n`,
-              "text/markdown",
-            )
-          }
-        >
-          导出 Markdown
-        </button>
-        <button
-          type="button"
-          onClick={() => download("quantrisklab-note.csv", `as_of,window\n${asOf},${windowSize}\n`, "text/csv")}
-        >
-          导出 CSV
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            void fetchResearch(asOf, windowSize)
-              .then((research) => {
-                const tex = booktabs(asOf, windowSize, research);
-                download("quantrisklab-note.tex", tex, "text/plain");
-                setMessage("已导出当前查询的描述性结果。");
-              })
-              .catch((exc: unknown) => setMessage(exc instanceof Error ? exc.message : "导出失败"));
-          }}
-        >
-          导出 LaTeX
-        </button>
+        {(
+          [
+            ["md", "导出 Markdown"],
+            ["csv", "导出 CSV"],
+            ["tex", "导出 LaTeX"],
+          ] as const
+        ).map(([format, label]) => (
+          <button
+            key={format}
+            type="button"
+            onClick={() => {
+              void fetch(`/api/note?as_of=${asOf}&window=${windowSize}&format=${format}`)
+                .then(async (response) => {
+                  if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+                  const extension = format === "tex" ? "tex" : format;
+                  download(`quantrisklab-note-${asOf}-w${windowSize}.${extension}`, await response.text(), "text/plain");
+                  setMessage("已导出当前查询的描述性结果。");
+                })
+                .catch((exc: unknown) => setMessage(exc instanceof Error ? exc.message : "导出失败"));
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       {message ? <p className="caption">{message}</p> : null}
     </section>
