@@ -409,7 +409,7 @@ export function App() {
       xAxis: { type: "category", data: windows.map((item) => item.title), ...axis },
       yAxis: { type: "value", name: "价格收益 %", ...axis },
       series: [
-        { name: "标普 500", type: "bar", data: windows.map((item) => (item.sp500_return == null ? null : item.sp500_return * 100)) },
+        { name: structure?.equity_title || "股指", type: "bar", data: windows.map((item) => (item.sp500_return == null ? null : item.sp500_return * 100)) },
         { name: "WTI", type: "bar", data: windows.map((item) => (item.wti_return == null ? null : item.wti_return * 100)) },
       ],
     };
@@ -419,7 +419,7 @@ export function App() {
     <div className="page" data-page={page} data-status={status} data-committed={status === "loading" ? "" : asOf}>
       <header>
         <div>
-          <div className="kicker">QuantRiskLab · V2.1.1</div>
+          <div className="kicker">QuantRiskLab · V2.2.0</div>
           <h1>宏观与风险研究工作台</h1>
           <p className="sub">图上的点都来自本地库里的公开观测。没有序列时留空，不用假数据补。</p>
         </div>
@@ -466,7 +466,7 @@ export function App() {
       </header>
       <div className="note">
         利率、利差和 VIX 按水平展示，不换算成债券收益。收益、实现波动率、回撤、历史模拟 VaR 和 Expected Shortfall 只用于价格或价格指数。
-        V2.1.1 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。地址栏保存这次查询，可以转发。
+        V2.2.0 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。地址栏保存这次查询，可以转发。
       </div>
       <nav className="windows" aria-label="工作区">
         {(
@@ -526,7 +526,13 @@ export function App() {
       ) : null}
       <Suspense fallback={<div className="note">正在打开这个工作区。</div>}>
         {page === "replay" || page === "explore" || page === "tails" || page === "compare" || page === "export" ? (
-          <Studio mode={page} asOf={asOf} windowSize={windowSize} />
+          <Studio
+            mode={page}
+            asOf={asOf}
+            windowSize={windowSize}
+            equityId={snapshot?.equity_id ?? "SP500"}
+            equityTitle={snapshot?.equity_title ?? "股指"}
+          />
         ) : null}
         {page === "research" ? <ResearchMethods body={research} asOf={asOf} windowSize={windowSize} /> : null}
       </Suspense>
@@ -541,7 +547,9 @@ export function App() {
             <li key={`${item.start}-${item.end}`}>
               {item.start} → {item.end}，10 年收益率 {item.change >= 0 ? "+" : ""}
               {item.change.toFixed(2)} 个百分点（{item.direction}）
-              {item.sp500_return == null ? "，标普 500 在该窗口没有可用价格" : `，标普 500 收益 ${(item.sp500_return * 100).toFixed(1)}%`}
+              {item.sp500_return == null
+                ? `，${structure?.equity_title || "股指"}在该窗口没有可用价格`
+                : `，${structure?.equity_title || "股指"}收益 ${(item.sp500_return * 100).toFixed(1)}%`}
               {item.wti_return == null ? "，WTI 没有可用价格" : `，WTI 收益 ${(item.wti_return * 100).toFixed(1)}%`}
               {item.vix_change == null ? "" : `，VIX ${item.vix_change >= 0 ? "+" : ""}${item.vix_change.toFixed(1)}`}
             </li>
@@ -780,7 +788,7 @@ export function App() {
 
       <footer>
         <p>数据来自 FRED、ALFRED 与 CFTC 的公开序列，经本地计算后展示。FRED 与圣路易斯联储不为本应用背书。第三方指数和商品价格另有其来源条款。这不是投资建议。</p>
-        <p>V2.1.1 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。</p>
+        <p>V2.2.0 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。线上站点是演示快照，不调用 FRED。</p>
         <p>以后若做回测，必须同时报告 walk-forward、费用、参数敏感性、基准和样本外结果。</p>
         <p>
           as_of = {asOf}。相关窗口 = {windowSize} 个观测。

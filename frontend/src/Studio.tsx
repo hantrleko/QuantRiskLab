@@ -60,15 +60,19 @@ export function Studio({
   mode,
   asOf,
   windowSize,
+  equityId = "SP500",
+  equityTitle = "股指",
 }: {
   mode: "replay" | "explore" | "tails" | "compare" | "export";
   asOf: string;
   windowSize: number;
+  equityId?: string;
+  equityTitle?: string;
 }) {
   if (mode === "replay") return <Replay asOf={asOf} windowSize={windowSize} />;
-  if (mode === "explore") return <Explorer asOf={asOf} windowSize={windowSize} />;
-  if (mode === "tails") return <Tails asOf={asOf} />;
-  if (mode === "compare") return <Compare asOf={asOf} />;
+  if (mode === "explore") return <Explorer asOf={asOf} windowSize={windowSize} equityId={equityId} />;
+  if (mode === "tails") return <Tails asOf={asOf} equityId={equityId} />;
+  if (mode === "compare") return <Compare asOf={asOf} equityTitle={equityTitle} />;
   return <Experiments asOf={asOf} windowSize={windowSize} />;
 }
 
@@ -277,8 +281,20 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   );
 }
 
-function Explorer({ asOf, windowSize }: { asOf: string; windowSize: number }) {
-  const [pair, setPair] = useState<(typeof PAIRS)[number]>(PAIRS[0]);
+function Explorer({ asOf, windowSize, equityId }: { asOf: string; windowSize: number; equityId: string }) {
+  const pairs = useMemo<[string, string][]>(
+    () => [
+      [equityId, "DCOILWTICO"],
+      ...PAIRS.filter((item) => item[0] !== "SP500" && item[0] !== equityId).map(
+        (item) => [item[0], item[1]] as [string, string],
+      ),
+    ],
+    [equityId],
+  );
+  const [pair, setPair] = useState<[string, string]>([equityId, "DCOILWTICO"]);
+  useEffect(() => {
+    setPair([equityId, "DCOILWTICO"]);
+  }, [equityId]);
   const query = useQuery<Record<string, unknown>>(
     `/api/explore?as_of=${asOf}&window=${windowSize}&left=${pair[0]}&right=${pair[1]}`,
     `${asOf}:${windowSize}:${pair.join(":")}`,
@@ -312,7 +328,7 @@ function Explorer({ asOf, windowSize }: { asOf: string; windowSize: number }) {
     <section className="panel">
       <h2>交互风险探索</h2>
       <div className="windows">
-        {PAIRS.map((item) => (
+        {pairs.map((item) => (
           <button key={item.join("-")} type="button" className={pair[0] === item[0] && pair[1] === item[1] ? "active" : ""} onClick={() => setPair(item)}>
             {item[0]} × {item[1]}
           </button>
@@ -335,9 +351,12 @@ function Explorer({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   );
 }
 
-function Tails({ asOf }: { asOf: string }) {
+function Tails({ asOf, equityId }: { asOf: string; equityId: string }) {
   const [alpha, setAlpha] = useState(0.05);
-  const query = useQuery<Record<string, unknown>>(`/api/tails?as_of=${asOf}&alpha=${alpha}&left=SP500&right=DCOILWTICO`, `${asOf}:${alpha}`);
+  const query = useQuery<Record<string, unknown>>(
+    `/api/tails?as_of=${asOf}&alpha=${alpha}&left=${equityId}&right=DCOILWTICO`,
+    `${asOf}:${alpha}:${equityId}`,
+  );
   const body = query.data;
   const sensitivity = (body?.sensitivity as { alpha: number; lift?: number | null; n_joint_tail?: number; eligible: boolean }[] | undefined) ?? [];
   const option = useMemo<EChartsOption>(() => {
@@ -378,15 +397,16 @@ function Tails({ asOf }: { asOf: string }) {
   );
 }
 
-function Compare({ asOf }: { asOf: string }) {
+function Compare({ asOf, equityTitle }: { asOf: string; equityTitle: string }) {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const custom = customStart && customEnd ? `&start=${customStart}&end=${customEnd}` : "";
-  const query = useQuery<{ windows: Record<string, unknown>[]; note: string }>(
-    `/api/compare?as_of=${asOf}&windows=taper,calm2017,covid,hike2022${custom}`,
+  const query = useQuery<{ windows: Record<string, unknown>[]; note: string; equity_title?: string }>(
+    `/api/compare?as_of=${asOf}&windows=gfc,taper,calm2017,covid,hike2022${custom}`,
     `${asOf}:${customStart}:${customEnd}`,
   );
   const windows = query.data?.windows ?? [];
+  const label = query.data?.equity_title || equityTitle;
   const option = useMemo<EChartsOption>(() => {
     const axis = baseAxis();
     return {
@@ -397,11 +417,11 @@ function Compare({ asOf }: { asOf: string }) {
       xAxis: { type: "category", data: windows.map((item) => String(item.title)), ...axis },
       yAxis: { type: "value", name: "价格收益", ...axis },
       series: [
-        { name: "标普 500", type: "bar", data: windows.map((item) => item.sp500_return as number | null) },
+        { name: label, type: "bar", data: windows.map((item) => (item.equity_return ?? item.sp500_return) as number | null) },
         { name: "WTI", type: "bar", data: windows.map((item) => item.wti_return as number | null) },
       ],
     };
-  }, [windows]);
+  }, [windows, label]);
   return (
     <section className="panel">
       <h2>危机对照</h2>
@@ -424,7 +444,10 @@ function Compare({ asOf }: { asOf: string }) {
           <ul>
             {windows.map((item) => (
               <li key={String(item.id)}>
-                {String(item.title)} {String(item.start)} → {String(item.end)}。标普 {item.sp500_return == null ? String(item.sp500_return_status) : Number(item.sp500_return).toFixed(3)}
+                {String(item.title)} {String(item.start)} → {String(item.end)}。{label}{" "}
+                {(item.equity_return ?? item.sp500_return) == null
+                  ? String(item.equity_return_status ?? item.sp500_return_status)
+                  : Number(item.equity_return ?? item.sp500_return).toFixed(3)}
                 ，WTI {item.wti_return == null ? String(item.wti_return_status) : Number(item.wti_return).toFixed(3)}
                 ，10年变动 {item.dgs10_change == null ? String(item.dgs10_change_status) : Number(item.dgs10_change).toFixed(2)}
               </li>
@@ -509,6 +532,7 @@ export function ResearchMethods({
     setOverride(null);
   }, [body]);
   const view = override ?? body;
+  const equityTitle = view?.equity_title || "股指";
   const decomposition = view?.decomposition;
   const points = decomposition?.points ?? [];
   const splitOption = useMemo<EChartsOption>(() => {
@@ -588,7 +612,7 @@ export function ResearchMethods({
       <h3>方差贡献</h3>
       <div className="windows">
         <label>
-          标普权重
+          {equityTitle}权重
           <input
             type="number"
             min={0}
@@ -647,8 +671,8 @@ export function ResearchMethods({
       <h3>条件分位数差值</h3>
       <p className="caption">{view?.covar?.note} {view?.covar?.equity_on_oil.label}</p>
       <p className="caption">
-        标普对原油：{view?.covar?.equity_on_oil.eligible ? fmt(view.covar.equity_on_oil.delta_covar, 4) : view?.covar?.equity_on_oil.reason ?? "没有结果"}。
-        标普对 10 年收益率变动：{view?.covar?.equity_on_yield_change.eligible ? fmt(view.covar.equity_on_yield_change.delta_covar, 4) : view?.covar?.equity_on_yield_change.reason ?? "没有结果"}。
+        {equityTitle}对原油：{view?.covar?.equity_on_oil.eligible ? fmt(view.covar.equity_on_oil.delta_covar, 4) : view?.covar?.equity_on_oil.reason ?? "没有结果"}。
+        {equityTitle}对 10 年收益率变动：{view?.covar?.equity_on_yield_change.eligible ? fmt(view.covar.equity_on_yield_change.delta_covar, 4) : view?.covar?.equity_on_yield_change.reason ?? "没有结果"}。
       </p>
       <h3>信用利差与期货持仓</h3>
       {view?.funding.status === "available" && view.funding.latest ? (

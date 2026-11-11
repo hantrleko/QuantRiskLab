@@ -13,6 +13,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from quantrisklab.catalog import active_credit_id, active_equity_id
 from quantrisklab.metrics.risk import rolling_corr, simple_returns
 from quantrisklab.store.pit import query_series
 
@@ -25,6 +26,7 @@ NETWORK_THRESHOLD = 0.35
 SIMILAR_DISTANCE = 0.75
 
 CRISIS_WINDOWS = (
+    {"id": "gfc", "title": "2008 年金融危机", "start": date(2008, 9, 15), "end": date(2009, 3, 9)},
     {"id": "taper", "title": "2013 年缩减讨论", "start": date(2013, 5, 22), "end": date(2013, 9, 18)},
     {"id": "calm2017", "title": "2017 年对照", "start": date(2017, 1, 3), "end": date(2017, 12, 29)},
     {"id": "covid", "title": "2020 年 3 月", "start": date(2020, 2, 20), "end": date(2020, 3, 23)},
@@ -360,7 +362,12 @@ def _similar_episodes(features: pd.DataFrame, as_of: date, horizon: int) -> dict
 
 def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
     titles = _titles(connection)
-    levels = {series_id: _level_frame(connection, series_id, as_of) for series_id in (*PRICE_IDS, *LEVEL_IDS)}
+    equity = active_equity_id(connection)
+    credit = active_credit_id(connection)
+    equity_title = titles.get(equity, equity)
+    credit_title = titles.get(credit, credit)
+    series_ids = list(dict.fromkeys((*PRICE_IDS, equity, *LEVEL_IDS, credit)))
+    levels = {series_id: _level_frame(connection, series_id, as_of) for series_id in series_ids}
     dgs10 = levels["DGS10"].set_index("observation_date")["value"].sort_index()
     changes = dgs10.diff(window)
     episodes = distinct_threshold_episodes(changes, window, RATE_MOVE_THRESHOLD)
@@ -369,17 +376,19 @@ def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
         end = date.fromisoformat(episode["end"])
         episode["dgs2_change"] = _window_change(levels["DGS2"], start, end)
         episode["vix_change"] = _window_change(levels["VIXCLS"], start, end)
-        sp_return = _window_return(levels["SP500"], start, end)
+        sp_return = _window_return(levels[equity], start, end)
         wti_return = _window_return(levels["DCOILWTICO"], start, end)
+        episode["equity_return"] = sp_return["value"]
+        episode["equity_return_status"] = sp_return["status"]
         episode["sp500_return"] = sp_return["value"]
         episode["sp500_return_status"] = sp_return["status"]
         episode["wti_return"] = wti_return["value"]
         episode["wti_return_status"] = wti_return["status"]
         episode["wti_return_reason"] = wti_return["reason"]
-        episode["credit_change"] = _window_change(levels["BAMLC0A0CM"], start, end)
+        episode["credit_change"] = _window_change(levels[credit], start, end)
 
-    panel = _feature_panel(levels, window)
-    tail = _tails(panel)
+    panel = _feature_panel(levels, window, equity, credit)
+    tail = _tails(panel, equity_title)
     network = correlation_network(
         panel[
             [
@@ -396,14 +405,14 @@ def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
         .dropna(how="all")
         .tail(window),
         {
-            "sp500_return": titles.get("SP500", "标普 500 收益"),
+            "sp500_return": equity_title,
             "wti_return": titles.get("DCOILWTICO", "WTI 收益"),
             "dgs10_change": titles.get("DGS10", "10 年收益率变动"),
             "dgs2_change": titles.get("DGS2", "2 年收益率变动"),
             "dff_change": titles.get("DFF", "联邦基金利率变动"),
             "curve_change": titles.get("T10Y2Y", "利差变动"),
             "vix_change": titles.get("VIXCLS", "VIX 变动"),
-            "credit_change": titles.get("BAMLC0A0CM", "信用利差变动"),
+            "credit_change": credit_title,
         },
     )
     sampled = panel.dropna(subset=["dgs10_change_window", "vix", "sp500_vol", "sp_wti_corr"])[
@@ -411,10 +420,14 @@ def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
     ].iloc[::21]
     similar = _similar_episodes(sampled, as_of, window)
     markov = _variance_regime(dgs10.diff())
-    crises = _crises(levels, as_of)
+    crises = _crises(levels, as_of, equity)
     latest_change = None if changes.dropna().empty else float(changes.dropna().iloc[-1])
     return {
         "as_of": as_of.isoformat(),
+        "equity_id": equity,
+        "equity_title": equity_title,
+        "credit_id": credit,
+        "credit_title": credit_title,
         "window": window,
         "threshold": RATE_MOVE_THRESHOLD,
         "latest_dgs10_change": latest_change,
@@ -433,7 +446,7 @@ def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
     }
 
 
-def _feature_panel(levels: dict[str, pd.DataFrame], window: int) -> pd.DataFrame:
+def _feature_panel(levels: dict[str, pd.DataFrame], window: int, equity_id: str, credit_id: str) -> pd.DataFrame:
     def series(frame: pd.DataFrame, name: str) -> pd.Series:
         if frame.empty:
             return pd.Series(dtype=float, name=name)
@@ -449,10 +462,10 @@ def _feature_panel(levels: dict[str, pd.DataFrame], window: int) -> pd.DataFrame
             "curve_change": series(levels["T10Y2Y"], "curve").diff(),
             "vix_change": series(levels["VIXCLS"], "vix").diff(),
             "vix": series(levels["VIXCLS"], "vix"),
-            "credit_change": series(levels["BAMLC0A0CM"], "credit").diff(),
+            "credit_change": series(levels[credit_id], "credit").diff(),
         }
     )
-    sp_ret = simple_returns(series(levels["SP500"], "sp"))
+    sp_ret = simple_returns(series(levels[equity_id], "equity"))
     wti_ret = simple_returns(series(levels["DCOILWTICO"], "wti"))
     frame["sp500_return"] = sp_ret
     frame["wti_return"] = wti_ret
@@ -461,7 +474,7 @@ def _feature_panel(levels: dict[str, pd.DataFrame], window: int) -> pd.DataFrame
     return frame.sort_index()
 
 
-def _tails(panel: pd.DataFrame) -> dict:
+def _tails(panel: pd.DataFrame, equity_title: str) -> dict:
     equity_oil = lower_tail_dependence(panel["sp500_return"], panel["wti_return"])
     rate_equity = conditional_coexceedance(panel["dgs10_change"], panel["sp500_return"])
     return {
@@ -476,17 +489,19 @@ def _tails(panel: pd.DataFrame) -> dict:
         },
         "fast_rate_and_equity_loss": {
             **rate_equity,
-            "note": "在 10 年收益率单日变动处于最高 5% 时，标普 500 简单收益落入自身最低 5% 的频率。这不是利率冲击的因果效应。",
+            "note": f"在 10 年收益率单日变动处于最高 5% 时，{equity_title}简单收益落入自身最低 5% 的频率。这不是利率冲击的因果效应。",
         },
     }
 
 
-def _crises(levels: dict[str, pd.DataFrame], as_of: date) -> dict:
+def _crises(levels: dict[str, pd.DataFrame], as_of: date, equity_id: str) -> dict:
     windows = []
     for spec in CRISIS_WINDOWS:
         if as_of < spec["start"]:
             continue
         end = spec["end"] if as_of >= spec["end"] else as_of
+        equity_return = _window_return(levels[equity_id], spec["start"], end)
+        wti_return = _window_return(levels["DCOILWTICO"], spec["start"], end)
         windows.append(
             {
                 "id": spec["id"],
@@ -496,9 +511,12 @@ def _crises(levels: dict[str, pd.DataFrame], as_of: date) -> dict:
                 "partial": end < spec["end"],
                 "dgs10_change": _window_change(levels["DGS10"], spec["start"], end),
                 "vix_change": _window_change(levels["VIXCLS"], spec["start"], end),
-                "sp500_return": _window_return(levels["SP500"], spec["start"], end)["value"],
-                "wti_return": _window_return(levels["DCOILWTICO"], spec["start"], end)["value"],
-                "wti_return_status": _window_return(levels["DCOILWTICO"], spec["start"], end)["status"],
+                "equity_return": equity_return["value"],
+                "equity_return_status": equity_return["status"],
+                "sp500_return": equity_return["value"],
+                "sp500_return_status": equity_return["status"],
+                "wti_return": wti_return["value"],
+                "wti_return_status": wti_return["status"],
             }
         )
     return {

@@ -127,6 +127,17 @@ def classify_market(name: str) -> str | None:
     return None
 
 
+def _parse_cot_date(text: str) -> date:
+    """Read a COT report date. Some 2010–2012 files label an ISO value as MM_DD_YYYY."""
+    value = text.strip()
+    for pattern in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(value, pattern).date()
+        except ValueError:
+            continue
+    raise ValueError(f"无法识别的报告日：{value}")
+
+
 def _norm_header(name: str) -> str:
     return name.strip().lstrip("\ufeff").lower().replace(" ", "_")
 
@@ -159,6 +170,7 @@ def parse_cot_zip(payload: bytes, report_family: str, source_name: str) -> pl.Da
         field_map.get("report_date_as_yyyy-mm-dd")
         or field_map.get("as_of_date_in_form_yyyy-mm-dd")
         or next((original for key, original in field_map.items() if "yyyy-mm-dd" in key), None)
+        or field_map.get("report_date_as_mm_dd_yyyy")
     )
     name_key = field_map.get("market_and_exchange_names")
     oi_key = field_map.get("open_interest_all")
@@ -180,7 +192,7 @@ def parse_cot_zip(payload: bytes, report_family: str, source_name: str) -> pl.Da
         if CFTC_MARKETS[market_id]["report"] != report_family:
             continue
         seen_names[market_id] = market_name
-        observation = datetime.strptime(row[date_key].strip(), "%Y-%m-%d").date()
+        observation = _parse_cot_date(row[date_key])
         release = cftc_release_date(observation)
         group = CFTC_MARKETS[market_id]["group"]
         long_col, short_col = POSITION_COLUMNS[group]

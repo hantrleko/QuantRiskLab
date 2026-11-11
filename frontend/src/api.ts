@@ -145,6 +145,10 @@ export type SnapshotInfo = {
   file_mtime_utc?: string;
   library_start?: string | null;
   library_end?: string | null;
+  equity_id?: string;
+  equity_title?: string;
+  credit_id?: string;
+  credit_title?: string;
   stale_flag_note?: string;
   reason?: string;
 };
@@ -174,6 +178,10 @@ export type StructureEpisode = {
 
 export type StructurePayload = {
   as_of: string;
+  equity_id?: string;
+  equity_title?: string;
+  credit_id?: string;
+  credit_title?: string;
   answer: string;
   caveat: string;
   latest_dgs10_change: number | null;
@@ -238,6 +246,8 @@ export function fetchStructure(asOf: string, window: number) {
 export type ResearchPayload = {
   as_of: string;
   version: string;
+  equity_id?: string;
+  equity_title?: string;
   note: string;
   decomposition: {
     status: string;

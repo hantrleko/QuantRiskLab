@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from quantrisklab import __version__
+from quantrisklab.catalog import active_credit_id, active_equity_id, series_title
 from quantrisklab.metrics.risk import simple_returns
 from quantrisklab.store.pit import query_series
 
@@ -144,13 +145,15 @@ def euler_allocation(
     window: int = 252,
     weights: tuple[float, float] = (0.5, 0.5),
 ) -> dict:
-    """Variance shares for SP500 and WTI. Weights must be non-negative and sum to one."""
+    """Variance shares for the long equity index and WTI. Weights must be non-negative and sum to one."""
     vector = np.asarray(weights, dtype=float)
     if vector.shape != (2,) or np.any(vector < 0) or not np.isclose(vector.sum(), 1.0):
         return {"eligible": False, "reason": "权重需要两个非负数，并且加总为 1", "weights": [float(item) for item in vector]}
-    sp = simple_returns(_level(connection, "SP500", as_of)).dropna()
+    equity = active_equity_id(connection)
+    equity_name = series_title(connection, equity, equity)
+    sp = simple_returns(_level(connection, equity, as_of)).dropna()
     wti = simple_returns(_level(connection, "DCOILWTICO", as_of)).dropna()
-    paired = pd.concat([sp.rename("SP500"), wti.rename("DCOILWTICO")], axis=1, sort=True).dropna()
+    paired = pd.concat([sp.rename(equity), wti.rename("DCOILWTICO")], axis=1, sort=True).dropna()
     if len(paired) > window:
         paired = paired.iloc[-window:]
     if len(paired) < 60:
@@ -170,6 +173,8 @@ def euler_allocation(
         "eligible": True,
         "reason": None,
         "n": int(len(paired)),
+        "equity_id": equity,
+        "equity_title": equity_name,
         "sample_start": _iso(paired.index[0]),
         "sample_end": _iso(paired.index[-1]),
         "weights": [float(item) for item in vector],
@@ -190,24 +195,26 @@ def euler_allocation(
 def local_projection(connection, as_of: date) -> dict:
     """Jordà local projections with lagged controls. Reduced form only."""
     label = "约达局部投影，约化式。控制变量是滞后项。10年收益率的一阶差分不是已识别的货币政策冲击。"
+    equity = active_equity_id(connection)
+    equity_name = series_title(connection, equity, equity)
     shock = _level(connection, NOMINAL, as_of).diff()
-    response = simple_returns(_level(connection, "SP500", as_of))
+    response = simple_returns(_level(connection, equity, as_of))
     pieces = [shock.rename("shock"), response.rename("response"), response.shift(1).rename("own_lag")]
     vix = _level(connection, "VIXCLS", as_of)
-    oas = _level(connection, OAS, as_of)
+    credit = _level(connection, active_credit_id(connection), as_of)
     if not vix.empty:
         pieces.append(vix.shift(1).rename("vix_lag"))
-    if not oas.empty:
-        pieces.append(oas.diff().shift(1).rename("oas_lag"))
+    if not credit.empty:
+        pieces.append(credit.diff().shift(1).rename("credit_lag"))
     panel = pd.concat(pieces, axis=1)
-    controls = [name for name in ("own_lag", "vix_lag", "oas_lag") if name in panel.columns and int(panel[name].notna().sum()) >= 80]
+    controls = [name for name in ("own_lag", "vix_lag", "credit_lag") if name in panel.columns and int(panel[name].notna().sum()) >= 80]
     usable = panel.dropna(subset=["shock", "response"])
     horizons = []
     if len(usable) < 80:
         return {
             "eligible": False,
             "label": label,
-            "reason": "收益率变动与标普简单收益的重叠样本少于 80",
+            "reason": f"收益率变动与{equity_name}简单收益的重叠样本少于 80",
             "controls": controls,
             "horizons": horizons,
         }
@@ -235,7 +242,7 @@ def local_projection(connection, as_of: date) -> dict:
                 "se": se,
                 "pvalue": float(fitted.pvalues["shock"]),
                 "ci95": [beta - 1.96 * se, beta + 1.96 * se],
-                "response": f"之后 {horizon} 个交易日的标普简单收益之和",
+                "response": f"之后 {horizon} 个交易日的{equity_name}简单收益之和",
                 "covariance": "Newey-West HAC",
                 "controls": controls,
             }
@@ -279,13 +286,17 @@ def delta_covar(left: pd.Series, right: pd.Series, tau: float = 0.05) -> dict:
 
 
 def covar_snapshot(connection, as_of: date) -> dict:
-    equity = simple_returns(_level(connection, "SP500", as_of))
+    equity = active_equity_id(connection)
+    equity_name = series_title(connection, equity, equity)
+    left = simple_returns(_level(connection, equity, as_of))
     oil = simple_returns(_level(connection, "DCOILWTICO", as_of))
     shock = _level(connection, NOMINAL, as_of).diff()
     return {
-        "equity_on_oil": delta_covar(equity, oil),
-        "equity_on_yield_change": delta_covar(equity, shock),
-        "note": "左侧是标普简单收益。状态变量处于自身 5% 分位时的条件分位，减去状态变量处于中位数时的条件分位。",
+        "equity_id": equity,
+        "equity_title": equity_name,
+        "equity_on_oil": delta_covar(left, oil),
+        "equity_on_yield_change": delta_covar(left, shock),
+        "note": f"左侧是{equity_name}简单收益。状态变量处于自身 5% 分位时的条件分位，减去状态变量处于中位数时的条件分位。",
     }
 
 
@@ -421,8 +432,10 @@ def replay_cross_section(connection, as_of: date, window: int = 63) -> dict:
         correlation_network,
     )
 
-    levels = {series_id: _level_frame(connection, series_id, as_of) for series_id in (*PRICE_IDS, *LEVEL_IDS)}
-    panel = _feature_panel(levels, window)
+    equity = active_equity_id(connection)
+    credit = active_credit_id(connection)
+    levels = {series_id: _level_frame(connection, series_id, as_of) for series_id in (*PRICE_IDS, equity, *LEVEL_IDS, credit)}
+    panel = _feature_panel(levels, window, equity, credit)
     titles = _titles(connection)
     columns = [
         "sp500_return",
@@ -437,14 +450,14 @@ def replay_cross_section(connection, as_of: date, window: int = 63) -> dict:
     network = correlation_network(
         panel[columns].dropna(how="all").tail(window),
         {
-            "sp500_return": titles.get("SP500", "标普 500 收益"),
+            "sp500_return": titles.get(equity, equity),
             "wti_return": titles.get("DCOILWTICO", "WTI 收益"),
             "dgs10_change": titles.get("DGS10", "10 年收益率变动"),
             "dgs2_change": titles.get("DGS2", "2 年收益率变动"),
             "dff_change": titles.get("DFF", "联邦基金利率变动"),
             "curve_change": titles.get("T10Y2Y", "利差变动"),
             "vix_change": titles.get("VIXCLS", "VIX 变动"),
-            "credit_change": titles.get("BAMLC0A0CM", "信用利差变动"),
+            "credit_change": titles.get(credit, "信用利差变动"),
         },
     )
     return {
@@ -463,9 +476,12 @@ def research_payload(
     window: int = 252,
     weights: tuple[float, float] = (0.5, 0.5),
 ) -> dict:
+    equity = active_equity_id(connection)
     return {
         "as_of": as_of.isoformat(),
         "version": __version__,
+        "equity_id": equity,
+        "equity_title": series_title(connection, equity, equity),
         "decomposition": nominal_decomposition(connection, as_of),
         "euler": euler_allocation(connection, as_of, window, weights),
         "local_projection": local_projection(connection, as_of),

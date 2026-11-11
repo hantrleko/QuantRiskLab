@@ -1,10 +1,16 @@
-# QuantRiskLab V2.1.1
+# QuantRiskLab V2.2.0
 
 时点宏观与风险研究工作台。它读取真实的公开数据，在给定日期 `as_of` 上只展示当时已经发布的观测，并计算少量可复核的风险描述统计。地址栏保存 `as_of`、窗口和工作区。实验页导出的 CSV、Markdown 和 LaTeX 使用同一次研究查询的数字。
 
-本平台不提供买卖建议，也不报告策略收益。V2.0 在已验收的计算上增加带置信区间的约化式局部投影、收缩协方差、描述性 CoVaR 差值和回放当日截面。序列没有入库时，对应结果留空。
+本平台不提供买卖建议，也不报告策略收益。线上站点是一份演示快照，不调用 FRED。长样本股指使用其真实序列号，不把另一条指数拼进 SP500。穆迪 Baa 与 10 年国债利差单独保存，不并入 ICE OAS。
 
-补 OAS、UNRATE vintage、CFTC 历史年和一次黄金下午定盘价尝试时，运行 `uv run python scripts/extend_v11.py`。它只写入实际返回的观测。
+本机更新数据库时运行 `uv run python scripts/refresh_local.py`。它只写入来源实际返回的行。没有本机密钥，或环境变量 `QUANTRISKLAB_PUBLIC=1` 时，它直接退出。不要把密钥写进仓库、Railway、Docker 或定时任务命令。
+
+每周本机任务可以用下面的命令登记。命令里没有密钥：
+
+```powershell
+schtasks /Create /F /SC WEEKLY /D MON /TN QuantRiskLabRefresh /ST 07:00 /TR "cmd /c cd /d F:\projects\QuantRiskLab && .venv\Scripts\python.exe scripts\refresh_local.py"
+```
 
 ## 环境
 
@@ -21,7 +27,7 @@ cd F:\projects\QuantRiskLab
 uv run python scripts/build_cached_v0.py
 ```
 
-`scripts/build_cached_v0.py` 只读取已经保存在 `data/raw` 的文件，不会重新请求 FRED。WTI、标普 500、公司债 OAS 和 CPI vintage 若已有本地文件，会在这次建库时入库。要补 OAS 历史、UNRATE vintage、CFTC 年报或黄金下午定盘价，只运行一次 `scripts/extend_v11.py`。失败的序列保持缺口。
+`scripts/build_cached_v0.py` 只读取已经保存在 `data/raw` 的文件，不会重新请求 FRED。当前演示库由 `scripts/refresh_local.py` 生成。FRED 的 SP500 仍从 2016-10 起，黄金序列没有补写。失败的请求保持缺口。
 
 如果没有设置环境变量，程序会从 `F:\AI\API` 里文件名包含 fred 的本地文件读取一次，并只注入当前进程的 `FRED_API_KEY`。密钥不会打印，也不会写入代码或 manifest。
 

@@ -50,4 +50,9 @@ def test_replay_names_a_series_that_starts_after_the_selected_date():
     finite = [point["date"] for point in later["points"] if point["sp_wti_corr"] is not None]
     may = [day for day in finite if "2020-05-01" <= day <= "2020-05-29"]
     assert may, f"2020-05 没有股油相关。有限样本 {finite[:3]} … {finite[-3:]}"
-    assert "起可见" in holdings["reason"]
+    if holdings["status"] == "unavailable" and "看不到 CFTC" in (holdings.get("reason") or ""):
+        assert "起可见" in holdings["reason"]
+    else:
+        for market in holdings["markets"]:
+            assert market["release_date"] <= "2016-01-04"
+            assert market["observation_date"] <= "2016-01-04"

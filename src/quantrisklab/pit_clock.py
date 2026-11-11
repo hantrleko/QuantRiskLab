@@ -133,20 +133,25 @@ def snapshot_status() -> dict:
     if not DB_PATH.exists():
         return {"available": False, "reason": "没有数据库快照"}
     modified = datetime.fromtimestamp(DB_PATH.stat().st_mtime, tz=timezone.utc)
-    library_start, library_end = _library_span()
+    library_start, library_end, equity_id, equity_title, credit_id, credit_title = _library_facts()
     return {
         "available": True,
         "snapshot_id": modified.strftime("%Y%m%dT%H%M%SZ"),
         "file_mtime_utc": modified.isoformat(),
         "library_start": library_start,
         "library_end": library_end,
+        "equity_id": equity_id,
+        "equity_title": equity_title,
+        "credit_id": credit_id,
+        "credit_title": credit_title,
         "stale_flag_note": "series_meta.stale 在建库时写入。部署后的静态数据库不会按来源日历自动改写这个标记。",
-        "refresh_note": "定期拉取尚未实现。在数据再分发许可确认前，不把自动更新写进生产任务。",
+        "refresh_note": "线上页面是演示快照，不调用 FRED。更新只在本机运行 scripts/refresh_local.py，密钥留在本机。",
     }
 
 
-def _library_span() -> tuple[str | None, str | None]:
-    """Full stored observation span. This is not the span visible at an as_of."""
+def _library_facts() -> tuple[str | None, str | None, str, str, str, str]:
+    """Stored span plus the long equity and credit series actually present."""
+    from quantrisklab.catalog import active_credit_id, active_equity_id, series_title
     from quantrisklab.store.database import connect_readonly
 
     connection = connect_readonly()
@@ -154,11 +159,21 @@ def _library_span() -> tuple[str | None, str | None]:
         row = connection.execute(
             "SELECT MIN(observation_date), MAX(observation_date) FROM observations WHERE value IS NOT NULL"
         ).fetchone()
+        equity = active_equity_id(connection)
+        credit = active_credit_id(connection)
+        equity_title = series_title(connection, equity, equity)
+        credit_title = series_title(connection, credit, credit)
     finally:
         connection.close()
     if row is None:
-        return None, None
-    return _span_day(row[0]), _span_day(row[1])
+        return None, None, equity, equity_title, credit, credit_title
+    return _span_day(row[0]), _span_day(row[1]), equity, equity_title, credit, credit_title
+
+
+def _library_span() -> tuple[str | None, str | None]:
+    """Full stored observation span. This is not the span visible at an as_of."""
+    start, end, _equity, _equity_title, _credit, _credit_title = _library_facts()
+    return start, end
 
 
 def _span_day(value) -> str | None:

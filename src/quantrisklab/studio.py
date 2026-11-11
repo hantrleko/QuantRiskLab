@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from quantrisklab import __version__
+from quantrisklab.catalog import CREDIT_LONG_ID, LONG_EQUITY_CANDIDATES, active_equity_id, series_title
 from quantrisklab.metrics.risk import rolling_corr, simple_returns
 from quantrisklab.metrics.structure import (
     CRISIS_WINDOWS,
@@ -21,17 +22,19 @@ from quantrisklab.paths import DATA_DIR
 from quantrisklab.pit_clock import snapshot_status
 
 EXPERIMENT_DIR = DATA_DIR / "experiments"
-PRICE_IDS = {"SP500", "DCOILWTICO"}
-DIFF_IDS = {"DGS2", "DGS10", "DFF", "T10Y2Y", "BAMLC0A0CM", "DFII10", "T10YIE", "DTWEXBGS"}
+PRICE_IDS = {"SP500", "DCOILWTICO", *LONG_EQUITY_CANDIDATES}
+DIFF_IDS = {"DGS2", "DGS10", "DFF", "T10Y2Y", "BAMLC0A0CM", CREDIT_LONG_ID, "DFII10", "T10YIE", "DTWEXBGS"}
 LEVEL_IDS = {"VIXCLS", "CPIAUCSL"}
 TRANSFORMS = {
     "SP500": "simple_return",
     "DCOILWTICO": "simple_return",
+    **{series_id: "simple_return" for series_id in LONG_EQUITY_CANDIDATES},
     "DGS2": "difference",
     "DGS10": "difference",
     "DFF": "difference",
     "T10Y2Y": "difference",
     "BAMLC0A0CM": "difference",
+    CREDIT_LONG_ID: "difference",
     "DFII10": "difference",
     "T10YIE": "difference",
     "DTWEXBGS": "difference",
@@ -90,11 +93,16 @@ def _transform(frame: pd.DataFrame, series_id: str, requested: str) -> pd.Series
 
 
 def replay_track(connection, as_of: date, window: int = 63) -> dict:
-    frames = {series_id: _level_frame(connection, series_id, as_of) for series_id in ("DGS10", "VIXCLS", "SP500", "DCOILWTICO")}
+    equity = active_equity_id(connection)
+    series_ids = list(dict.fromkeys(["DGS10", "VIXCLS", equity, "DCOILWTICO", "SP500"]))
+    frames = {series_id: _level_frame(connection, series_id, as_of) for series_id in series_ids}
     titles = {
         row[0]: row[1]
         for row in connection.execute(
-            "SELECT series_id, title_zh FROM series_meta WHERE series_id IN ('DGS10', 'VIXCLS', 'SP500', 'DCOILWTICO')"
+            "SELECT series_id, title_zh FROM series_meta WHERE series_id IN ("
+            + ", ".join("?" for _ in series_ids)
+            + ")",
+            series_ids,
         ).fetchall()
     }
     coverage = {
@@ -109,6 +117,8 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
             "actual_end": actual_end,
             "beyond_coverage": actual_end is None or as_of.isoformat() > actual_end,
             "coverage": coverage,
+            "equity_id": equity,
+            "equity_title": titles.get(equity, equity),
             "price_overlap_end": None,
             "points": [],
             "events": [dict(item) for item in CRISIS_WINDOWS if item["end"] <= as_of],
@@ -118,7 +128,7 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
     panel = pd.DataFrame({"dgs10": dgs, "dgs10_change": dgs.diff(window)})
     for series_id, column, kind in (
         ("VIXCLS", "vix", "level"),
-        ("SP500", "sp500_return", "return"),
+        (equity, "sp500_return", "return"),
         ("DCOILWTICO", "wti_return", "return"),
     ):
         frame = frames[series_id]
@@ -159,6 +169,8 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
         "actual_end": actual_end,
         "beyond_coverage": bool(actual_end and as_of.isoformat() > actual_end),
         "coverage": coverage,
+        "equity_id": equity,
+        "equity_title": titles.get(equity, equity),
         "price_overlap_end": overlap_end,
         "points": points,
         "events": events,
@@ -254,7 +266,7 @@ def tail_laboratory(connection, as_of: date, left: str, right: str, alpha: float
     return summary
 
 
-def _measure_window(connection, as_of: date, item_id: str, title: str, start: date, requested_end: date) -> dict:
+def _measure_window(connection, as_of: date, item_id: str, title: str, start: date, requested_end: date, equity_id: str) -> dict:
     end = requested_end if requested_end <= as_of else as_of
     row = {
         "id": item_id,
@@ -266,7 +278,7 @@ def _measure_window(connection, as_of: date, item_id: str, title: str, start: da
     for series_id, key, kind in (
         ("DGS10", "dgs10_change", "change"),
         ("VIXCLS", "vix_change", "change"),
-        ("SP500", "sp500_return", "return"),
+        (equity_id, "equity_return", "return"),
         ("DCOILWTICO", "wti_return", "return"),
     ):
         frame = _level_frame(connection, series_id, as_of)
@@ -281,6 +293,8 @@ def _measure_window(connection, as_of: date, item_id: str, title: str, start: da
             result = _window_return(frame, start, end)
             row[key] = result["value"]
             row[f"{key}_status"] = result["status"]
+    row["sp500_return"] = row.get("equity_return")
+    row["sp500_return_status"] = row.get("equity_return_status")
     return row
 
 
@@ -290,16 +304,19 @@ def compare_windows(
     window_ids: list[str],
     custom: tuple[date, date] | None = None,
 ) -> dict:
+    equity = active_equity_id(connection)
     selected = [item for item in CRISIS_WINDOWS if item["id"] in window_ids and item["start"] <= as_of]
     missing_ids = [item for item in window_ids if item not in {row["id"] for row in CRISIS_WINDOWS}]
     rows = [
-        _measure_window(connection, as_of, item["id"], item["title"], item["start"], item["end"])
+        _measure_window(connection, as_of, item["id"], item["title"], item["start"], item["end"], equity)
         for item in selected
     ]
     if custom is not None and custom[0] <= as_of:
-        rows.append(_measure_window(connection, as_of, "custom", "自选窗口", custom[0], custom[1]))
+        rows.append(_measure_window(connection, as_of, "custom", "自选窗口", custom[0], custom[1], equity))
     return {
         "as_of": as_of.isoformat(),
+        "equity_id": equity,
+        "equity_title": series_title(connection, equity, equity),
         "windows": rows,
         "unknown_ids": missing_ids,
         "note": "同一套窗口函数。序列在该窗口没有观测时记为 missing，不填入替代值。收益不是因果效应。",

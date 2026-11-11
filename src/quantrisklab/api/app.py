@@ -28,6 +28,7 @@ from quantrisklab.api.queries import (
     sanitize,
     vintage_dates,
 )
+from quantrisklab.catalog import active_equity_id
 from quantrisklab.logging_setup import setup_logging
 from quantrisklab.note import note_document
 from quantrisklab.pit_clock import availability_catalog, snapshot_status
@@ -291,7 +292,7 @@ def replay(as_of: str | None = None, window: int = Query(default=63, ge=21, le=2
 
 @app.get("/api/explore")
 def explore(
-    left: str = "SP500",
+    left: str | None = None,
     right: str = "DCOILWTICO",
     as_of: str | None = None,
     window: int = Query(default=63, ge=20, le=756),
@@ -300,7 +301,7 @@ def explore(
     assert day is not None
     connection = _db()
     try:
-        payload = explore_pair(connection, day, left, right, window)
+        payload = explore_pair(connection, day, left or active_equity_id(connection), right, window)
     finally:
         connection.close()
     return sanitize(payload)
@@ -308,7 +309,7 @@ def explore(
 
 @app.get("/api/tails")
 def tails(
-    left: str = "SP500",
+    left: str | None = None,
     right: str = "DCOILWTICO",
     as_of: str | None = None,
     alpha: float = Query(default=0.05, gt=0, lt=0.5),
@@ -317,7 +318,7 @@ def tails(
     assert day is not None
     connection = _db()
     try:
-        payload = tail_laboratory(connection, day, left, right, alpha)
+        payload = tail_laboratory(connection, day, left or active_equity_id(connection), right, alpha)
     finally:
         connection.close()
     return sanitize(payload)
@@ -326,7 +327,7 @@ def tails(
 @app.get("/api/compare")
 def compare(
     as_of: str | None = None,
-    windows: str = "taper,covid,hike2022",
+    windows: str = "gfc,taper,calm2017,covid,hike2022",
     start: str | None = None,
     end: str | None = None,
 ) -> dict:

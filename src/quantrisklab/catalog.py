@@ -110,7 +110,7 @@ FRED_SLOTS: list[dict] = [
         "observation_start": "2010-01-01",
         "release_rule": SAME_DAY
         + " 价格指数在观测日收盘后可知。收益是价格指数简单收益，不含股息，不是全收益。",
-        "notes": "优先 FRED 的 SP500。若不可用或停更，按候选顺序改用仍在更新的公开指数，并在元数据中写明限制。",
+        "notes": "SP500 只保留 FRED 上约十年的标普价格指数，不与其他指数拼接。更长的样本另存仍在更新、且官方起点不晚于 2000 年的候选指数，序列号保持原样。",
     },
     {
         "slot": "credit",
@@ -121,7 +121,7 @@ FRED_SLOTS: list[dict] = [
         "prefer_fresh": True,
         "observation_start": "2010-01-01",
         "release_rule": SAME_DAY + " 信用利差是期权调整利差或评级利差，单位为百分点，不是债券价格。",
-        "notes": YIELD_NOTE + " 优先 ICE BofA 美国公司债 OAS（BAMLC0A0CM），否则用穆迪 Baa 与 10 年国债利差（BAA10Y）。",
+        "notes": YIELD_NOTE + " ICE BofA OAS（BAMLC0A0CM）样本较短，单独保存。更长的信用利差是穆迪 Baa 与 10 年国债利差（BAA10Y），不并入 OAS。",
     },
     {
         "slot": "real10",
@@ -228,3 +228,53 @@ CFTC_MARKETS = {
         "group_zh": "杠杆资金",
     },
 }
+
+# SP500 on FRED keeps about ten years. These candidates are checked for a real
+# history that reaches 2000. Only a series the refresh script actually stored
+# becomes the long equity leg.
+LONG_EQUITY_CANDIDATES = ("WILL5000PRFC", "WILL5000PR", "NASDAQCOM")
+SHORT_EQUITY_ID = "SP500"
+CREDIT_LONG_ID = "BAA10Y"
+CREDIT_SHORT_ID = "BAMLC0A0CM"
+
+
+def active_equity_id(connection) -> str:
+    """Long index stored under its own id, or SP500 when that index is absent."""
+    placeholders = ", ".join("?" for _ in LONG_EQUITY_CANDIDATES)
+    try:
+        row = connection.execute(
+            f"SELECT series_id FROM series_meta WHERE series_id IN ({placeholders}) ORDER BY observation_start LIMIT 1",
+            list(LONG_EQUITY_CANDIDATES),
+        ).fetchone()
+    except Exception:
+        return SHORT_EQUITY_ID
+    if row is None or not row[0]:
+        return SHORT_EQUITY_ID
+    return str(row[0])
+
+
+def active_credit_id(connection) -> str:
+    """Moody Baa spread when it is stored. OAS stays a separate short series."""
+    try:
+        row = connection.execute(
+            "SELECT series_id FROM series_meta WHERE series_id = ?",
+            [CREDIT_LONG_ID],
+        ).fetchone()
+    except Exception:
+        return CREDIT_SHORT_ID
+    if row is None or not row[0]:
+        return CREDIT_SHORT_ID
+    return CREDIT_LONG_ID
+
+
+def series_title(connection, series_id: str, fallback: str) -> str:
+    try:
+        row = connection.execute(
+            "SELECT title_zh FROM series_meta WHERE series_id = ?",
+            [series_id],
+        ).fetchone()
+    except Exception:
+        return fallback
+    if row is None or not row[0]:
+        return fallback
+    return str(row[0])
