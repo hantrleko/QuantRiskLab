@@ -15,7 +15,12 @@ def main() -> int:
         return 2
     from extend_v22 import main as extend_main
 
-    return extend_main()
+    code = extend_main()
+    if code != 0:
+        return code
+    from fit_regimes import main as fit_main
+
+    return fit_main()
 
 
 if __name__ == "__main__":

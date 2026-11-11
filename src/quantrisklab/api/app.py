@@ -33,7 +33,8 @@ from quantrisklab.logging_setup import setup_logging
 from quantrisklab.note import note_document
 from quantrisklab.pit_clock import availability_catalog, snapshot_status
 from quantrisklab.metrics.structure import structure_payload
-from quantrisklab.api.workbench import workbench_payload
+from quantrisklab.api.workbench import view_payload, workbench_payload
+from quantrisklab.regimes import regime_payload
 from quantrisklab.research import replay_cross_section, research_payload
 from quantrisklab.studio import compare_windows, explore_pair, replay_track, save_experiment, tail_laboratory
 from quantrisklab.paths import DB_PATH, FAILURES_JSON, ROOT
@@ -82,7 +83,10 @@ async def hide_public_docs(request, call_next):
     path = request.url.path.rstrip("/") or "/"
     if public_deployment() and (path in {"/docs", "/redoc", "/openapi.json"} or path.startswith("/docs/")):
         return JSONResponse({"detail": "公网部署不提供接口文档。"}, status_code=404)
-    return await call_next(request)
+    response = await call_next(request)
+    if request.method == "GET" and path.startswith("/api/") and response.status_code == 200:
+        response.headers["Cache-Control"] = "public, max-age=300"
+    return response
 
 
 def _db():
@@ -390,6 +394,32 @@ def section(as_of: str | None = None, window: int = Query(default=63, ge=21, le=
     connection = _db()
     try:
         payload = replay_cross_section(connection, day, window)
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/view")
+def view(page: str, as_of: str | None = None, window: int = Query(default=63, ge=21, le=252)) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = view_payload(connection, page, day, window, date.today())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="页面名称不在工作区列表里") from exc
+    finally:
+        connection.close()
+    return sanitize(payload)
+
+
+@app.get("/api/regimes")
+def regimes(as_of: str | None = None) -> dict:
+    day = _day(as_of, date.today())
+    assert day is not None
+    connection = _db()
+    try:
+        payload = regime_payload(connection, day)
     finally:
         connection.close()
     return sanitize(payload)

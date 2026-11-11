@@ -67,7 +67,7 @@ export type HeatRow = {
   values: (number | null)[];
 };
 
-async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
   if (!response.ok) {
     throw new Error(`${response.status} ${await response.text()}`);
@@ -219,7 +219,8 @@ export type StructurePayload = {
     eligible: boolean;
     reason?: string | null;
     method?: string;
-    high_variance_spells?: number;
+    estimation_end?: string;
+    latest_filtered_high?: number | null;
     latest_in_high_variance?: boolean;
     caveat?: string;
   };
@@ -338,4 +339,47 @@ export type WorkbenchPayload = {
 
 export function fetchWorkbench(asOf: string, window: number) {
   return getJson<WorkbenchPayload>(`/api/workbench?as_of=${asOf}&window=${window}`);
+}
+
+export type ViewPayload = {
+  as_of: string;
+  window: number;
+  page: string;
+  catalog: { series: SeriesMeta[] };
+  snapshot: SnapshotInfo;
+  availability: { series: AvailabilityRow[] };
+  visible_end: string | null;
+  series?: Record<string, Observation[]>;
+  latest_macro?: Record<string, Observation[]>;
+  quality?: QualityRow[];
+  failures?: FailureRow[];
+  heatmap?: Awaited<ReturnType<typeof fetchHeatmap>>;
+  correlation?: Awaited<ReturnType<typeof fetchCorrelation>>;
+  positions?: { series: PositionSeries[]; caveat: string };
+  structure?: StructurePayload;
+  research?: ResearchPayload;
+  metrics?: Awaited<ReturnType<typeof fetchMetrics>>[];
+};
+
+export type RegimePoint = { observation_date: string; filtered_high: number; smoothed_high: number };
+
+export type RegimeModel = {
+  eligible: boolean;
+  reason?: string | null;
+  model_id: string;
+  title?: string;
+  estimation_end?: string;
+  latest_filtered_high?: number | null;
+  caveat?: string;
+  points?: RegimePoint[];
+};
+
+export type RegimePayload = {
+  as_of: string;
+  note: string;
+  models: RegimeModel[];
+};
+
+export function fetchView(page: string, asOf: string, window: number) {
+  return getJson<ViewPayload>(`/api/view?page=${page}&as_of=${asOf}&window=${window}`);
 }

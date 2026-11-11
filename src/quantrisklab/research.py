@@ -422,6 +422,95 @@ def revision_wedge(connection, series_id: str, as_of: date) -> dict:
     }
 
 
+def vintage_comparison(connection, series_id: str, as_of: date) -> dict:
+    """Same observation months: the vintage visible on as_of, and the latest stored vintage."""
+    title = series_title(connection, series_id, series_id)
+    note = (
+        "左图是截面日已经发布的版本，发布日不晚于截面日。"
+        "右图是库存里同一观测月的最新版本。右图发布日晚于截面日时，回放当日看不到这次修订。"
+    )
+    empty = {
+        "series_id": series_id,
+        "title": title,
+        "status": "unavailable",
+        "reason": "这个 as_of 看不到该序列。",
+        "then": [],
+        "now": [],
+        "revised_count": 0,
+        "later_release_count": 0,
+        "note": note,
+    }
+    visible = query_series(connection, series_id, as_of)
+    if visible.height == 0:
+        return empty
+    final = connection.execute(
+        """
+        SELECT observation_date, value AS final_value, release_date AS final_release
+        FROM (
+            SELECT observation_date, value, release_date,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY observation_date
+                       ORDER BY release_date DESC
+                   ) AS rn
+            FROM observations
+            WHERE series_id = ? AND value IS NOT NULL
+        )
+        WHERE rn = 1
+        """,
+        [series_id],
+    ).fetchdf()
+    if final.empty:
+        empty["reason"] = "没有可用的库存最新版本。"
+        return empty
+    left = visible.select(["observation_date", "release_date", "value"]).to_pandas()
+    left["observation_date"] = pd.to_datetime(left["observation_date"])
+    left["release_date"] = pd.to_datetime(left["release_date"])
+    final["observation_date"] = pd.to_datetime(final["observation_date"])
+    final["final_release"] = pd.to_datetime(final["final_release"])
+    merged = left.merge(final, on="observation_date", how="inner").dropna(subset=["value", "final_value"])
+    merged = merged[merged["observation_date"] <= pd.Timestamp(as_of)].sort_values("observation_date")
+    if merged.empty:
+        empty["reason"] = "可见样本与库存最新版本没有重叠。"
+        return empty
+    then_points = []
+    now_points = []
+    revised = 0
+    later = 0
+    for row in merged.itertuples(index=False):
+        then_value = float(row.value)
+        now_value = float(row.final_value)
+        now_release = pd.Timestamp(row.final_release).date()
+        then_points.append(
+            {
+                "observation_date": _iso(row.observation_date),
+                "release_date": _iso(row.release_date),
+                "value": then_value,
+            }
+        )
+        now_points.append(
+            {
+                "observation_date": _iso(row.observation_date),
+                "release_date": now_release.isoformat(),
+                "value": now_value,
+            }
+        )
+        if round(then_value, 6) != round(now_value, 6):
+            revised += 1
+        if now_release > as_of:
+            later += 1
+    return {
+        "series_id": series_id,
+        "title": title,
+        "status": "available",
+        "as_of": as_of.isoformat(),
+        "revised_count": revised,
+        "later_release_count": later,
+        "then": then_points,
+        "now": now_points,
+        "note": note,
+    }
+
+
 def replay_cross_section(connection, as_of: date, window: int = 63) -> dict:
     from quantrisklab.metrics.structure import (
         LEVEL_IDS,
@@ -466,6 +555,7 @@ def replay_cross_section(connection, as_of: date, window: int = 63) -> dict:
         "network": network,
         "crowding": crowding_snapshot(connection, as_of),
         "revisions": [revision_wedge(connection, "CPIAUCSL", as_of), revision_wedge(connection, "UNRATE", as_of)],
+        "cpi": vintage_comparison(connection, "CPIAUCSL", as_of),
         "note": "网络和持仓只使用 release_date 与 observation_date 都不晚于该日的记录。修订终值若晚于该日，会标明为事后信息。",
     }
 

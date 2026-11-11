@@ -15,6 +15,7 @@ import pandas as pd
 
 from quantrisklab.catalog import active_credit_id, active_equity_id
 from quantrisklab.metrics.risk import rolling_corr, simple_returns
+from quantrisklab.regimes import regime_summary
 from quantrisklab.store.pit import query_series
 
 logger = logging.getLogger("quantrisklab.structure")
@@ -272,53 +273,6 @@ def _titles(connection) -> dict[str, str]:
     return {row[0]: row[1] for row in rows}
 
 
-def _variance_regime(changes: pd.Series) -> dict:
-    """High-variance spells from a rolling variance threshold.
-
-    A two-state Markov MLE on this Treasury sample did not return inside an
-    interactive request, so it is not reported as a smoothed probability.
-    """
-    if changes.empty or not isinstance(changes.index, pd.DatetimeIndex):
-        return {"eligible": False, "reason": "没有足够的利率变动来划分方差状态", "method": "rolling_variance_median"}
-    weekly = changes.dropna().resample("W-FRI").sum()
-    weekly = weekly.replace([np.inf, -np.inf], np.nan).dropna()
-    roll = weekly.rolling(12).var()
-    if roll.notna().sum() < 40:
-        return {"eligible": False, "reason": "周度利率变动不足以划分方差状态", "method": "rolling_variance_median"}
-    median = float(roll.median())
-    flags = (roll >= median).fillna(False).to_numpy(dtype=bool)
-    spells = _binary_spells(list(roll.index), list(flags), gap=4)
-    return {
-        "eligible": True,
-        "reason": None,
-        "method": "rolling_variance_median",
-        "n_weeks": int(len(weekly)),
-        "high_variance_spells": len(spells),
-        "latest_in_high_variance": bool(flags[-1]),
-        "latest_spell_end": None if not spells else spells[-1]["end"],
-        "caveat": "高方差段指 12 周滚动方差不低于样本中位数，相邻间隔不超过 4 周的命中并成一段。这不是 Markov switching 的平滑概率。全样本两状态 MLE 在交互时限内没有返回，因此没有写成状态概率。",
-    }
-
-
-def _binary_spells(index, flags: list[bool], gap: int) -> list[dict]:
-    spells = []
-    start = None
-    last = None
-    for position, flag in enumerate(flags):
-        if flag and start is None:
-            start = position
-            last = position
-        elif flag:
-            last = position
-        elif start is not None and last is not None and position - last > gap:
-            spells.append({"start": _iso(index[start]), "end": _iso(index[last])})
-            start = None
-            last = None
-    if start is not None and last is not None:
-        spells.append({"start": _iso(index[start]), "end": _iso(index[last])})
-    return spells
-
-
 def _similar_episodes(features: pd.DataFrame, as_of: date, horizon: int) -> dict:
     usable = features.dropna()
     if usable.empty:
@@ -419,7 +373,7 @@ def structure_payload(connection, as_of: date, window: int = HORIZON) -> dict:
         ["dgs10_change_window", "vix", "sp500_vol", "sp_wti_corr"]
     ].iloc[::21]
     similar = _similar_episodes(sampled, as_of, window)
-    markov = _variance_regime(dgs10.diff())
+    markov = regime_summary(connection, as_of)
     crises = _crises(levels, as_of, equity)
     latest_change = None if changes.dropna().empty else float(changes.dropna().iloc[-1])
     return {
@@ -532,11 +486,14 @@ def _answer(as_of: date, window: int, episodes: list[dict], latest_change: float
         if similar.get("eligible")
         else f"相似历史片段这次没有计算：{similar.get('reason')}。"
     )
-    markov_text = (
-        f"按滚动方差中位数划分，高方差周度变动出现过 {markov['high_variance_spells']} 段，当前{'处于' if markov['latest_in_high_variance'] else '不处于'}高方差段。"
-        if markov.get("eligible")
-        else f"方差状态这次没有结果：{markov.get('reason')}。"
-    )
+    if markov.get("eligible") and markov.get("latest_filtered_high") is not None:
+        state_name = "高方差状态" if markov.get("latest_in_high_variance") else "低方差状态"
+        markov_text = (
+            f"截至 {markov.get('estimation_end')} 的离线两状态估计中，最近一周滤波概率为 "
+            f"{markov['latest_filtered_high']:.2f}，落在{state_name}。这不是危机标签。"
+        )
+    else:
+        markov_text = f"两状态估计这次没有结果：{markov.get('reason')}。"
     return (
         f"截至 {as_of.isoformat()}，只使用当时已发布的数据：{window} 个观测内 10 年期国债收益率绝对变动达到 "
         f"{RATE_MOVE_THRESHOLD:.2f} 个百分点的独立片段有 {len(episodes)} 次。最近这一窗口的收益率变动是 {change_text}。"

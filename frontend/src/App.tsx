@@ -4,7 +4,8 @@ import {
   fetchCorrelation,
   fetchHeatmap,
   fetchMetrics,
-  fetchWorkbench,
+  fetchView,
+  getJson,
   type FailureRow,
   type HeatRow,
   type MatrixBlock,
@@ -12,6 +13,7 @@ import {
   type PositionSeries,
   type QualityRow,
   type AvailabilityRow,
+  type RegimePayload,
   type ResearchPayload,
   type SeriesMeta,
   type SnapshotInfo,
@@ -32,6 +34,22 @@ function withinYears(points: Observation[], asOf: string, years: number | null):
   const start = new Date(asOf);
   start.setFullYear(start.getFullYear() - years);
   return capped.filter((point) => point.observation_date >= start.toISOString().slice(0, 10));
+}
+
+function regimeOption(points: { observation_date: string; filtered_high: number; smoothed_high: number }[]): EChartsOption {
+  const axis = baseAxis();
+  return {
+    color: palette,
+    tooltip: { trigger: "axis" },
+    legend: { textStyle: { color: muted }, bottom: 0 },
+    grid: { left: 64, right: 16, top: 16, bottom: 64, containLabel: false },
+    xAxis: { type: "time", ...axis },
+    yAxis: { type: "value", name: "概率", nameLocation: "middle", nameGap: 40, min: 0, max: 1, ...axis },
+    series: [
+      { name: "滤波概率", type: "line", showSymbol: false, data: points.map((point) => [point.observation_date, point.filtered_high]) },
+      { name: "平滑概率", type: "line", showSymbol: false, data: points.map((point) => [point.observation_date, point.smoothed_high]) },
+    ],
+  };
 }
 
 function lineOption(series: { name: string; points: Observation[] }[], yName: string): EChartsOption {
@@ -141,6 +159,7 @@ export function App() {
   const [positionNote, setPositionNote] = useState("");
   const [structure, setStructure] = useState<StructurePayload | null>(null);
   const [research, setResearch] = useState<ResearchPayload | null>(null);
+  const [regimes, setRegimes] = useState<RegimePayload | null>(null);
   const [page, setPage] = useState<PageId>(initialQuery.page);
   const [status, setStatus] = useState<"loading" | "success" | "empty" | "error">("loading");
   const [error, setError] = useState("");
@@ -148,6 +167,7 @@ export function App() {
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [coverageEnd, setCoverageEnd] = useState<string | null>(null);
   const requestSerial = useRef(0);
+  const regimeSerial = useRef(0);
 
   useEffect(() => {
     const start = snapshot?.library_start;
@@ -165,6 +185,7 @@ export function App() {
     const requestId = ++requestSerial.current;
     const queryAsOf = asOf;
     const queryWindow = windowSize;
+    const queryPage = page;
     setStatus("loading");
     setError("");
     setStructure(null);
@@ -178,60 +199,64 @@ export function App() {
     setLatestMacro({});
     async function load() {
       try {
-        const workbench = await fetchWorkbench(queryAsOf, queryWindow);
+        const view = await fetchView(queryPage, queryAsOf, queryWindow);
         if (requestSerial.current !== requestId) return;
-        if (workbench.as_of !== queryAsOf || workbench.structure.as_of !== queryAsOf || workbench.heatmap.as_of !== queryAsOf) {
+        if (view.as_of !== queryAsOf || view.page !== queryPage) {
           throw new Error("返回结果的 as_of 与当前查询不一致");
         }
-        const datasets = workbench.catalog.series;
+        if (view.structure && view.structure.as_of !== queryAsOf) {
+          throw new Error("返回结果的 as_of 与当前查询不一致");
+        }
+        if (view.heatmap && view.heatmap.as_of !== queryAsOf) {
+          throw new Error("返回结果的 as_of 与当前查询不一致");
+        }
+        const datasets = view.catalog.series;
         setCatalog(datasets);
-        setSnapshot(workbench.snapshot);
-        setAvailability(workbench.availability.series);
-        const seriesBodies = Object.entries(workbench.series);
-        const latestBodies = Object.entries(workbench.latest_macro);
-        const qualityBody = { series: workbench.quality, failures: workbench.failures };
-        const heatmapBody = workbench.heatmap;
-        const correlationBody = workbench.correlation;
-        const positionBody = workbench.positions;
-        const structureBody = workbench.structure;
-        const metricBodies = workbench.metrics;
+        setSnapshot(view.snapshot);
+        setAvailability(view.availability.series);
+        const seriesBodies = Object.entries(view.series ?? {});
+        const latestBodies = Object.entries(view.latest_macro ?? {});
+        const qualityRows = view.quality ?? [];
         const visibleSeries = seriesBodies.map(
           ([id, observations]) =>
             [id, observations.filter((point) => point.observation_date <= queryAsOf && point.release_date <= queryAsOf)] as const,
         );
         const visibleCount = visibleSeries.reduce((sum, [, observations]) => sum + observations.length, 0);
-        const structureVisible: StructurePayload = {
-          ...structureBody,
-          episodes: {
-            ...structureBody.episodes,
-            items: structureBody.episodes.items.filter((item) => item.end <= queryAsOf),
-          },
-          crises: {
-            ...structureBody.crises,
-            windows: structureBody.crises.windows.filter((item) => item.start <= queryAsOf),
-          },
-        };
-        const ends = qualityBody.series.map((row) => row.end).filter((value): value is string => Boolean(value));
-        setCoverageEnd(ends.length ? ends.sort().at(-1) ?? null : null);
-        setQuality(qualityBody.series);
-        setFailures(qualityBody.failures);
-        setHeatmap(heatmapBody);
-        setCorrelation(correlationBody);
+        const structureBody = view.structure;
+        const structureVisible: StructurePayload | null = structureBody
+          ? {
+              ...structureBody,
+              episodes: {
+                ...structureBody.episodes,
+                items: structureBody.episodes.items.filter((item) => item.end <= queryAsOf),
+              },
+              crises: {
+                ...structureBody.crises,
+                windows: structureBody.crises.windows.filter((item) => item.start <= queryAsOf),
+              },
+            }
+          : null;
+        setCoverageEnd(view.visible_end);
+        setQuality(qualityRows);
+        setFailures(view.failures ?? []);
+        setHeatmap(view.heatmap ?? null);
+        setCorrelation(view.correlation ?? null);
         setPositions(
-          positionBody.series
+          (view.positions?.series ?? [])
             .map((series) => ({
               ...series,
               points: series.points.filter((point) => point.release_date <= queryAsOf && point.observation_date <= queryAsOf),
             }))
             .filter((series) => series.points.length > 0),
         );
-        setPositionNote(positionBody.caveat);
+        setPositionNote(view.positions?.caveat ?? "");
         setPoints(Object.fromEntries(visibleSeries));
         setLatestMacro(Object.fromEntries(latestBodies));
-        setMetrics(metricBodies);
+        setMetrics(view.metrics ?? []);
         setStructure(structureVisible);
-        setResearch(workbench.research.as_of === queryAsOf ? workbench.research : null);
-        const hasVisible = visibleCount > 0 || qualityBody.series.some((row) => row.n_visible > 0);
+        setResearch(view.research && view.research.as_of === queryAsOf ? view.research : null);
+        const studioPage = queryPage === "replay" || queryPage === "explore" || queryPage === "tails" || queryPage === "compare" || queryPage === "export";
+        const hasVisible = studioPage || visibleCount > 0 || qualityRows.some((row) => row.n_visible > 0) || Boolean(structureVisible);
         setStatus(hasVisible ? "success" : "empty");
       } catch (exc) {
         if (requestSerial.current !== requestId) return;
@@ -241,7 +266,23 @@ export function App() {
       }
     }
     void load();
-  }, [asOf, windowSize]);
+  }, [asOf, windowSize, page]);
+
+  useEffect(() => {
+    if (page !== "research") {
+      setRegimes(null);
+      return;
+    }
+    const requestId = ++regimeSerial.current;
+    const queryAsOf = asOf;
+    getJson<RegimePayload>(`/api/regimes?as_of=${queryAsOf}`)
+      .then((body) => {
+        if (requestId === regimeSerial.current && body.as_of === queryAsOf) setRegimes(body);
+      })
+      .catch(() => {
+        if (requestId === regimeSerial.current) setRegimes(null);
+      });
+  }, [asOf, page]);
 
   const levelSeries = catalog.filter((item) => item.role === "yield" || item.role === "spread");
   const vix = catalog.find((item) => item.role === "volatility_index");
@@ -419,7 +460,7 @@ export function App() {
     <div className="page" data-page={page} data-status={status} data-committed={status === "loading" ? "" : asOf}>
       <header>
         <div>
-          <div className="kicker">QuantRiskLab · V2.2.0</div>
+          <div className="kicker">QuantRiskLab · V2.3.0</div>
           <h1>宏观与风险研究工作台</h1>
           <p className="sub">图上的点都来自本地库里的公开观测。没有序列时留空，不用假数据补。</p>
         </div>
@@ -466,7 +507,7 @@ export function App() {
       </header>
       <div className="note">
         利率、利差和 VIX 按水平展示，不换算成债券收益。收益、实现波动率、回撤、历史模拟 VaR 和 Expected Shortfall 只用于价格或价格指数。
-        V2.2.0 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。地址栏保存这次查询，可以转发。
+        V2.3.0 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。地址栏保存这次查询，可以转发。
       </div>
       <nav className="windows" aria-label="工作区">
         {(
@@ -591,9 +632,21 @@ export function App() {
           {structure?.similar.eligible ? <Chart option={similarOption} height={260} /> : null}
           <p className="caption">
             {structure?.markov.eligible
-              ? `高方差段 ${structure.markov.high_variance_spells} 段，当前${structure.markov.latest_in_high_variance ? "处于" : "不处于"}高方差段。${structure.markov.caveat ?? ""}`
+              ? `截至 ${structure.markov.estimation_end} 的离线两状态估计，最近一周滤波概率 ${
+                  structure.markov.latest_filtered_high == null ? "—" : structure.markov.latest_filtered_high.toFixed(2)
+                }。${structure.markov.caveat ?? ""}`
               : structure?.markov.reason}
           </p>
+          {regimes?.models.map((model) =>
+            model.eligible && model.points?.length ? (
+              <div key={model.model_id}>
+                <p className="caption">
+                  {model.title}。估计截止 {model.estimation_end}。平滑概率用到该次估计内部更晚的周。
+                </p>
+                <Chart option={regimeOption(model.points)} height={260} />
+              </div>
+            ) : null,
+          )}
         </section>
       </div>
 
@@ -788,7 +841,7 @@ export function App() {
 
       <footer>
         <p>数据来自 FRED、ALFRED 与 CFTC 的公开序列，经本地计算后展示。FRED 与圣路易斯联储不为本应用背书。第三方指数和商品价格另有其来源条款。这不是投资建议。</p>
-        <p>V2.2.0 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。线上站点是演示快照，不调用 FRED。</p>
+        <p>V2.3.0 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。线上站点是演示快照，不调用 FRED。</p>
         <p>以后若做回测，必须同时报告 walk-forward、费用、参数敏感性、基准和样本外结果。</p>
         <p>
           as_of = {asOf}。相关窗口 = {windowSize} 个观测。

@@ -13,7 +13,8 @@ QuantRiskLab V0.2 是一个本地研究工作台：下载少量可复核的公�
 - `store/database.py`：DuckDB 表 `observations`、`series_meta`、`cftc_positions`、`manifest`。manifest 同时写成 `data/manifest.json`，与原始文件和 parquet 分开。
 - `quality/checks.py`：可见样本的缺失、长缺口、重复 vintage 键和修订月数。
 - `metrics/risk.py`：价格简单收益、实现波动率、最大回撤、历史模拟 VaR / Expected Shortfall，以及差分相关。Statsmodels 的 Ljung-Box 只作为收益自相关的描述统计。
-- `metrics/structure.py`：利率快速变动片段、下尾共现、相关网络、相似历史状态、滚动方差高波动段，以及预设危机窗口。输入必须已经过 `as_of` 过滤。两状态 Markov MLE 没有放进交互请求，因为在本机上不能按时返回。
+- `metrics/structure.py`：利率快速变动片段、下尾共现、相关网络、相似历史状态，以及预设危机窗口。输入必须已经过 `as_of` 过滤。两状态概率来自 `regimes.py` 事先写入的表，请求路径不拟合。
+- `api/workbench.py`：`/api/view` 按页面返回总览、时点、审计、研究或只含目录和快照的回放壳。`/api/workbench` 仍保留整包。
 - `api/app.py`：127.0.0.1:8876。健康检查、目录、质量、序列、指标、相关、热力图、持仓、描述性回归和 `/api/structure`。前端通过 Vite 把 `/api` 代理到这个端口。
 - `frontend`：React、TypeScript、ECharts。图表只读上述接口。
 

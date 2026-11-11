@@ -24,6 +24,59 @@ type ReplayPoint = {
 
 type CoverageRow = { rows: number; start: string | null; end: string | null; title_zh: string };
 
+type VintagePoint = { observation_date: string; release_date: string; value: number | null };
+
+function vintageOption(name: string, points: VintagePoint[], low: number, high: number): EChartsOption {
+  const axis = baseAxis();
+  return {
+    color: palette,
+    tooltip: { trigger: "axis" },
+    grid: { left: 72, right: 12, top: 16, bottom: 28, containLabel: false },
+    xAxis: { type: "time", ...axis },
+    yAxis: { type: "value", name: "指数", nameLocation: "middle", nameGap: 48, min: low, max: high, scale: true, ...axis },
+    series: [{ name, type: "line", showSymbol: false, connectNulls: false, data: points.map((point) => [point.observation_date, point.value]) }],
+  };
+}
+
+function CpiCompare({ body }: { body: unknown }) {
+  const cpi = body as {
+    status?: string;
+    title?: string;
+    note?: string;
+    reason?: string;
+    revised_count?: number;
+    later_release_count?: number;
+    then?: VintagePoint[];
+    now?: VintagePoint[];
+  } | null;
+  if (!cpi) return null;
+  if (cpi.status !== "available") return <p className="caption">{cpi.reason}</p>;
+  const values = [...(cpi.then ?? []), ...(cpi.now ?? [])]
+    .map((point) => point.value)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (!values.length) return <p className="caption">{cpi.reason ?? "没有可并排的 CPI 观测。"}</p>;
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const pad = (high - low) * 0.05 || 1;
+  return (
+    <>
+      <p className="caption">
+        {cpi.title}：同一观测月并排。数值不同的月份有 {cpi.revised_count ?? 0} 个。最新发布日晚于回放日的月份有 {cpi.later_release_count ?? 0} 个。{cpi.note}
+      </p>
+      <div className="grid">
+        <div>
+          <p className="caption">截面日可见</p>
+          <Chart option={vintageOption("截面日可见", cpi.then ?? [], low - pad, high + pad)} height={260} />
+        </div>
+        <div>
+          <p className="caption">库存最新版本</p>
+          <Chart option={vintageOption("库存最新版本", cpi.now ?? [], low - pad, high + pad)} height={260} />
+        </div>
+      </div>
+    </>
+  );
+}
+
 type ReplayPayload = {
   as_of: string;
   actual_end: string | null;
@@ -274,6 +327,7 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
             </p>
           ))
             : null}
+          {!playing && section && section.as_of === current?.date ? <CpiCompare body={section.cpi} /> : null}
           <Chart option={option} onReady={(chart) => { chartHandle.current = chart; }} />
         </>
       ) : null}
