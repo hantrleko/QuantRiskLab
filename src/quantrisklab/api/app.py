@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date
 
 from fastapi import FastAPI, HTTPException, Query
@@ -63,9 +64,24 @@ def _day(value: str | None, default: date | None = None) -> date | None:
     if value is None or value == "":
         return default
     try:
-        return date.fromisoformat(value)
+        parsed = date.fromisoformat(value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="日期格式应为 YYYY-MM-DD") from exc
+    if parsed > date.today():
+        raise HTTPException(status_code=422, detail="查询日期不能晚于今天")
+    return parsed
+
+
+def public_deployment() -> bool:
+    return os.environ.get("QUANTRISKLAB_PUBLIC", "").strip().lower() in {"1", "true", "yes"}
+
+
+@app.middleware("http")
+async def hide_public_docs(request, call_next):
+    path = request.url.path.rstrip("/") or "/"
+    if public_deployment() and (path in {"/docs", "/redoc", "/openapi.json"} or path.startswith("/docs/")):
+        return JSONResponse({"detail": "公网部署不提供接口文档。"}, status_code=404)
+    return await call_next(request)
 
 
 def _db():
@@ -419,6 +435,8 @@ def note(as_of: str | None = None, window: int = Query(default=63), format: str 
 
 @app.post("/api/experiments")
 def experiments(payload: dict) -> dict:
+    if public_deployment():
+        raise HTTPException(status_code=403, detail="公网部署不保存实验记录。")
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="实验记录必须是对象")
     return save_experiment(payload)

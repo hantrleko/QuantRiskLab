@@ -143,6 +143,8 @@ export type SnapshotInfo = {
   available: boolean;
   snapshot_id?: string;
   file_mtime_utc?: string;
+  library_start?: string | null;
+  library_end?: string | null;
   stale_flag_note?: string;
   reason?: string;
 };

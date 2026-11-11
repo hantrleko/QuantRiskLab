@@ -13,5 +13,6 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 COPY --from=web /web/dist ./frontend/dist
 COPY data/quantrisklab.duckdb ./data/quantrisklab.duckdb
+ENV QUANTRISKLAB_PUBLIC=1
 EXPOSE 8080
 CMD ["sh", "-c", "uv run uvicorn quantrisklab.api.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

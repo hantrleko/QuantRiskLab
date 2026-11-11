@@ -300,7 +300,12 @@ def crowding_snapshot(connection, as_of: date) -> dict:
         [as_of, as_of],
     ).fetchdf()
     if frame.empty:
-        return {"status": "unavailable", "reason": "这个 as_of 看不到 CFTC 持仓。", "markets": []}
+        first = connection.execute("SELECT MIN(release_date) FROM cftc_positions").fetchone()
+        first_day = _iso(first[0]) if first and first[0] is not None else None
+        reason = "这个 as_of 看不到 CFTC 持仓。"
+        if first_day:
+            reason = f"这个 as_of 看不到 CFTC 持仓。库内持仓自 {first_day} 起可见。"
+        return {"status": "unavailable", "reason": reason, "markets": [], "positions_start": first_day}
     markets = []
     for market_id, group in frame.groupby("market_id", sort=False):
         values = pd.to_numeric(group["net_over_oi"], errors="coerce").dropna()

@@ -22,14 +22,33 @@ type ReplayPoint = {
   sp_wti_corr: number | null;
 };
 
+type CoverageRow = { rows: number; start: string | null; end: string | null; title_zh: string };
+
 type ReplayPayload = {
   as_of: string;
   actual_end: string | null;
   beyond_coverage: boolean;
+  coverage?: Record<string, CoverageRow>;
+  price_overlap_end?: string | null;
   note: string;
   points: ReplayPoint[];
   events: { id: string; title: string; start: string; end: string; partial: boolean }[];
 };
+
+function seriesVisibility(day: string, coverage: Record<string, CoverageRow> | undefined): string[] {
+  if (!coverage) return [];
+  const lines: string[] = [];
+  for (const row of Object.values(coverage)) {
+    const title = row.title_zh || "该序列";
+    if (!row.start) {
+      lines.push(`${title}在这个 as_of 下没有可见观测。`);
+      continue;
+    }
+    if (day < row.start) lines.push(`${title}自 ${row.start.slice(0, 7)} 起可见`);
+    else if (row.end && day > row.end) lines.push(`${title}可见至 ${row.end}`);
+  }
+  return lines;
+}
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -112,6 +131,8 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
   }, [playing, points.length, speed]);
   const shown = points.slice(0, cursor + 1);
   const current = shown.at(-1);
+  const coverageNotes = current ? seriesVisibility(current.date, query.data?.coverage) : [];
+  const priceNotStarted = coverageNotes.some((line) => line.includes("起可见"));
   const [section, setSection] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
     if (!current || playing) return;
@@ -134,11 +155,11 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
       color: palette,
       tooltip: { trigger: "axis" },
       legend: { textStyle: { color: muted }, bottom: 0, type: "scroll" },
-      grid: { left: 12, right: 16, top: 28, bottom: 72, containLabel: true },
+      grid: { left: 72, right: 16, top: 16, bottom: 72, containLabel: false },
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 28 }],
       toolbox: { feature: { restore: { title: "重置缩放" } } },
       xAxis: { type: "time", ...axis },
-      yAxis: { type: "value", name: "10年收益率变动（百分点）", nameGap: 18, ...axis },
+      yAxis: { type: "value", name: "10年收益率变动（百分点）", nameLocation: "middle", nameGap: 48, ...axis },
       series: [{ name: "10年收益率变动", type: "line", showSymbol: false, data: shown.map((point) => [point.date, point.dgs10_change]) }],
     };
   }, [shown]);
@@ -222,16 +243,23 @@ function Replay({ asOf, windowSize }: { asOf: string; windowSize: number }) {
             }}
           />
           <p className="caption">
-            回放日 {current?.date ?? "无"}。10年收益率 {fmt(current?.dgs10 ?? null)}，63日变动 {fmt(current?.dgs10_change ?? null)}，VIX {fmt(current?.vix ?? null)}，
-            股油相关 {fmt(current?.sp_wti_corr ?? null)}。样本到 {current?.date} 为止。
+            回放日 {current?.date ?? "无"}。10年收益率 {fmt(current?.dgs10 ?? null)}，{windowSize}日变动 {fmt(current?.dgs10_change ?? null)}，VIX {fmt(current?.vix ?? null)}，
+            股油相关 {fmt(current?.sp_wti_corr ?? null)}。
+            {coverageNotes.length ? `${coverageNotes.join("。")}。` : ""}
+            {current && current.sp_wti_corr == null && !priceNotStarted ? "窗口内有效重叠收益少于 30 个，股油相关留空。" : ""}
+            {current && current.sp_wti_corr != null && query.data?.price_overlap_end && current.date > query.data.price_overlap_end
+              ? `股油相关用到 ${query.data.price_overlap_end} 为止的重叠收益。`
+              : ""}
           </p>
           <p className="caption">
             {playing
               ? "播放时不重复请求截面。"
               : section && section.as_of === current?.date
-                ? `该日截面：网络${(section.network as { eligible?: boolean; links?: unknown[] } | undefined)?.eligible ? ` ${(section.network as { links?: unknown[] }).links?.length ?? 0} 条边` : "样本不足"}。持仓 ${
-                    ((section.crowding as { markets?: unknown[] } | undefined)?.markets ?? []).length
-                  } 个市场。${String(section.note ?? "")}`
+                ? `该日截面：网络${(section.network as { eligible?: boolean; links?: unknown[] } | undefined)?.eligible ? ` ${(section.network as { links?: unknown[] }).links?.length ?? 0} 条边` : "样本不足"}。${(() => {
+                    const crowding = section.crowding as { markets?: unknown[]; reason?: string } | undefined;
+                    const count = crowding?.markets?.length ?? 0;
+                    return count === 0 ? crowding?.reason ?? "这个 as_of 看不到 CFTC 持仓。" : `持仓 ${count} 个市场。`;
+                  })()}${String(section.note ?? "")}`
                 : "正在读取该日截面。"}
           </p>
           {!playing && section && section.as_of === current?.date
@@ -416,8 +444,8 @@ function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number })
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ as_of: asOf, window: windowSize, method: "replay+explore+tails", note: "本地研究记录，不进入公开数据包。" }),
     });
-    const body = await response.json();
-    setMessage(response.ok ? `已保存 ${body.experiment_id}` : `保存失败 ${response.status}`);
+    const body = (await response.json().catch(() => ({}))) as { experiment_id?: string; detail?: string };
+    setMessage(response.ok ? `已保存 ${body.experiment_id}` : `保存失败 ${response.status}${body.detail ? `：${body.detail}` : ""}`);
   }
   function download(filename: string, content: string, type: string) {
     const url = URL.createObjectURL(new Blob([content], { type }));
@@ -431,7 +459,7 @@ function Experiments({ asOf, windowSize }: { asOf: string; windowSize: number })
     <section className="panel">
       <h2>研究实验与导出</h2>
       <p className="caption">
-        记录只写在本机 data/experiments，不作为公开原始数据发布。CSV、Markdown 和 LaTeX 使用这次 as_of 与窗口的同一张描述性表。样本不足的期限不填系数。
+        记录只写在本机 data/experiments，不作为公开原始数据发布。公网页面不把实验写到服务器。导出仍可用。CSV、Markdown 和 LaTeX 使用这次 as_of 与窗口的同一张描述性表。样本不足的期限不填系数。
       </p>
       <div className="windows">
         <button type="button" onClick={() => void save()}>保存当前实验</button>

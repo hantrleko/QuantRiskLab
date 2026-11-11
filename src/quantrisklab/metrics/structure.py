@@ -13,7 +13,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from quantrisklab.metrics.risk import simple_returns
+from quantrisklab.metrics.risk import rolling_corr, simple_returns
 from quantrisklab.store.pit import query_series
 
 logger = logging.getLogger("quantrisklab.structure")
@@ -457,7 +457,7 @@ def _feature_panel(levels: dict[str, pd.DataFrame], window: int) -> pd.DataFrame
     frame["sp500_return"] = sp_ret
     frame["wti_return"] = wti_ret
     frame["sp500_vol"] = sp_ret.rolling(window).std(ddof=1) * math.sqrt(252)
-    frame["sp_wti_corr"] = sp_ret.rolling(window).corr(wti_ret)
+    frame["sp_wti_corr"] = rolling_corr(sp_ret, wti_ret, window)
     return frame.sort_index()
 
 

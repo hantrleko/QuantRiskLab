@@ -26,6 +26,18 @@ def simple_returns(prices: pd.Series) -> pd.Series:
     return returns.mask(invalid)
 
 
+def rolling_corr(left: pd.Series, right: pd.Series, window: int) -> pd.Series:
+    """Pearson correlation of the valid pairs inside each window.
+
+    A missing return, including a day that touches a non-positive price, stays
+    missing. It does not blank the rest of the window. The window still needs
+    at least 30 valid pairs when it is that long.
+    """
+    paired = pd.concat([left.rename("left"), right.rename("right")], axis=1, sort=True)
+    minimum = window if window < MIN_RETURNS else MIN_RETURNS
+    return paired["left"].rolling(window, min_periods=minimum).corr(paired["right"])
+
+
 def historical_var_es(returns: np.ndarray, alpha: float) -> tuple[float, float]:
     """Empirical return quantile and the mean of returns at or below that quantile.
 

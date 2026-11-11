@@ -40,11 +40,11 @@ function lineOption(series: { name: string; points: Observation[] }[], yName: st
     color: palette,
     tooltip: { trigger: "axis" },
     legend: { textStyle: { color: muted }, type: "scroll", bottom: 0 },
-    grid: { left: 12, right: 16, top: 36, bottom: 78, containLabel: true },
+    grid: { left: 64, right: 16, top: 24, bottom: 78, containLabel: false },
     dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 28 }],
     toolbox: { right: 8, top: 0, feature: { restore: { title: "重置缩放" } } },
     xAxis: { type: "time", ...axis },
-    yAxis: { type: "value", name: yName, scale: true, ...axis },
+    yAxis: { type: "value", name: yName, nameLocation: "middle", nameGap: 48, scale: true, ...axis },
     series: series.map((item) => ({
       name: item.name,
       type: "line",
@@ -148,6 +148,11 @@ export function App() {
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [coverageEnd, setCoverageEnd] = useState<string | null>(null);
   const requestSerial = useRef(0);
+
+  useEffect(() => {
+    const start = snapshot?.library_start;
+    if (start && asOf < start) setAsOf(start);
+  }, [snapshot, asOf]);
 
   useEffect(() => {
     const next = writeQuery(asOf, windowSize, page);
@@ -414,14 +419,20 @@ export function App() {
     <div className="page" data-page={page} data-status={status} data-committed={status === "loading" ? "" : asOf}>
       <header>
         <div>
-          <div className="kicker">QuantRiskLab · V2.1</div>
+          <div className="kicker">QuantRiskLab · V2.1.1</div>
           <h1>宏观与风险研究工作台</h1>
           <p className="sub">图上的点都来自本地库里的公开观测。没有序列时留空，不用假数据补。</p>
         </div>
         <div className="controls">
           <label>
             可见截止日期 as_of
-            <input type="date" value={asOf} max={TODAY} onChange={(event) => setAsOf(event.target.value)} />
+            <input
+              type="date"
+              value={asOf}
+              min={snapshot?.library_start ?? undefined}
+              max={TODAY}
+              onChange={(event) => setAsOf(event.target.value)}
+            />
           </label>
           <label>
             历史窗口
@@ -455,7 +466,7 @@ export function App() {
       </header>
       <div className="note">
         利率、利差和 VIX 按水平展示，不换算成债券收益。收益、实现波动率、回撤、历史模拟 VaR 和 Expected Shortfall 只用于价格或价格指数。
-        V2.1 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。地址栏保存这次查询，可以转发。
+        V2.1.1 不做策略回测，不提供买卖建议。日期近似不是精确公布时刻。地址栏保存这次查询，可以转发。
       </div>
       <nav className="windows" aria-label="工作区">
         {(
@@ -504,7 +515,8 @@ export function App() {
         ))}
       </nav>
       <p className="caption">
-        查询日期 {asOf}。数据库覆盖至 {coverageEnd ?? "尚无可见观测"}。快照 {snapshot?.snapshot_id ?? "读取中"}
+        查询日期 {asOf}。库内观测 {snapshot?.library_start ?? "…"} 至 {snapshot?.library_end ?? "…"}。
+        可选日期不早于库内最早观测，不晚于今天。本次 as_of 下最晚可见观测日 {coverageEnd ?? "无"}。快照 {snapshot?.snapshot_id ?? "读取中"}
         {snapshot?.file_mtime_utc ? `，生成于 ${snapshot.file_mtime_utc}` : ""}。
       </p>
       {status === "loading" ? <div className="note">正在按 {asOf}、{windowSize} 日窗口重新计算。上一组结果已隐藏。</div> : null}
@@ -768,7 +780,7 @@ export function App() {
 
       <footer>
         <p>数据来自 FRED、ALFRED 与 CFTC 的公开序列，经本地计算后展示。FRED 与圣路易斯联储不为本应用背书。第三方指数和商品价格另有其来源条款。这不是投资建议。</p>
-        <p>V2.1 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。</p>
+        <p>V2.1.1 不包含策略回测。页面上的数字不是可交易业绩。公开数据库的再分发许可仍未确认。</p>
         <p>以后若做回测，必须同时报告 walk-forward、费用、参数敏感性、基准和样本外结果。</p>
         <p>
           as_of = {asOf}。相关窗口 = {windowSize} 个观测。

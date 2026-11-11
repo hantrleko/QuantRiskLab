@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from quantrisklab import __version__
-from quantrisklab.metrics.risk import simple_returns
+from quantrisklab.metrics.risk import rolling_corr, simple_returns
 from quantrisklab.metrics.structure import (
     CRISIS_WINDOWS,
     _level_frame,
@@ -40,13 +40,38 @@ TRANSFORMS = {
 }
 
 
-def _coverage(frame: pd.DataFrame) -> dict:
+def _stored_visible_start(connection, series_id: str) -> str | None:
+    """First as_of on which this series has any stored observation.
+
+    An empty point-in-time slice still needs this date, so the page can say
+    when the series becomes visible instead of only saying that it is missing.
+    """
+    row = connection.execute(
+        """
+        SELECT MIN(
+            CASE
+                WHEN release_date > observation_date THEN release_date
+                ELSE observation_date
+            END
+        )
+        FROM observations
+        WHERE series_id = ? AND value IS NOT NULL
+        """,
+        [series_id],
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return pd.Timestamp(row[0]).date().isoformat()
+
+
+def _coverage(frame: pd.DataFrame, title_zh: str, stored_start: str | None = None) -> dict:
     if frame.empty:
-        return {"rows": 0, "start": None, "end": None}
+        return {"rows": 0, "start": stored_start, "end": None, "title_zh": title_zh}
     return {
         "rows": int(len(frame)),
         "start": pd.Timestamp(frame["observation_date"].iloc[0]).date().isoformat(),
         "end": pd.Timestamp(frame["observation_date"].iloc[-1]).date().isoformat(),
+        "title_zh": title_zh,
     }
 
 
@@ -66,7 +91,16 @@ def _transform(frame: pd.DataFrame, series_id: str, requested: str) -> pd.Series
 
 def replay_track(connection, as_of: date, window: int = 63) -> dict:
     frames = {series_id: _level_frame(connection, series_id, as_of) for series_id in ("DGS10", "VIXCLS", "SP500", "DCOILWTICO")}
-    coverage = {series_id: _coverage(frame) for series_id, frame in frames.items()}
+    titles = {
+        row[0]: row[1]
+        for row in connection.execute(
+            "SELECT series_id, title_zh FROM series_meta WHERE series_id IN ('DGS10', 'VIXCLS', 'SP500', 'DCOILWTICO')"
+        ).fetchall()
+    }
+    coverage = {
+        series_id: _coverage(frame, titles.get(series_id, series_id), _stored_visible_start(connection, series_id))
+        for series_id, frame in frames.items()
+    }
     ends = [item["end"] for item in coverage.values() if item["end"]]
     actual_end = max(ends) if ends else None
     if frames["DGS10"].empty:
@@ -75,6 +109,7 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
             "actual_end": actual_end,
             "beyond_coverage": actual_end is None or as_of.isoformat() > actual_end,
             "coverage": coverage,
+            "price_overlap_end": None,
             "points": [],
             "events": [dict(item) for item in CRISIS_WINDOWS if item["end"] <= as_of],
             "note": "所选日期早于快照中的 10 年期收益率，没有可回放的点。",
@@ -93,9 +128,9 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
         series = frame.set_index("observation_date")["value"]
         panel[column] = series if kind == "level" else simple_returns(series)
     if "sp500_return" in panel and "wti_return" in panel:
-        panel["sp_wti_corr"] = pd.to_numeric(panel["sp500_return"], errors="coerce").rolling(window).corr(
-            pd.to_numeric(panel["wti_return"], errors="coerce")
-        )
+        panel["sp_wti_corr"] = rolling_corr(panel["sp500_return"], panel["wti_return"], window)
+    overlap = panel[["sp500_return", "wti_return"]].dropna() if {"sp500_return", "wti_return"} <= set(panel.columns) else panel.iloc[0:0]
+    overlap_end = pd.Timestamp(overlap.index.max()).date().isoformat() if len(overlap) else None
     points = []
     for stamp, row in panel.sort_index().iterrows():
         day = pd.Timestamp(stamp).date().isoformat()
@@ -124,10 +159,11 @@ def replay_track(connection, as_of: date, window: int = 63) -> dict:
         "actual_end": actual_end,
         "beyond_coverage": bool(actual_end and as_of.isoformat() > actual_end),
         "coverage": coverage,
+        "price_overlap_end": overlap_end,
         "points": points,
         "events": events,
         "snapshot": snapshot_status(),
-        "note": "回放只包含 release_date 与 observation_date 都不晚于 as_of 的记录。相关是价格简单收益的滚动相关，不是因果传染。",
+        "note": "回放只包含 release_date 与 observation_date 都不晚于 as_of 的记录。股油相关只用窗口内的有效简单收益。非正价格当天和下一期留空，其余日期仍计算。至少 30 个有效重叠才给出相关。这不是因果传染。",
     }
 
 
@@ -146,7 +182,7 @@ def explore_pair(connection, as_of: date, left: str, right: str, window: int) ->
     paired = paired_all.iloc[-window:] if len(paired_all) > window else paired_all
     corr = float(paired["left"].corr(paired["right"]))
     mechanical = {left, right} <= {"DGS10", "DGS2", "T10Y2Y"} and "T10Y2Y" in {left, right}
-    rolling = paired_all["left"].rolling(63).corr(paired_all["right"]).dropna()
+    rolling = rolling_corr(paired_all["left"], paired_all["right"], 63).dropna()
     scatter = [
         {"date": pd.Timestamp(stamp).date().isoformat(), "left": float(row.left), "right": float(row.right)}
         for stamp, row in paired.iterrows()

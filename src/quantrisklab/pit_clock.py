@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from quantrisklab.paths import DB_PATH
 
@@ -133,10 +133,39 @@ def snapshot_status() -> dict:
     if not DB_PATH.exists():
         return {"available": False, "reason": "没有数据库快照"}
     modified = datetime.fromtimestamp(DB_PATH.stat().st_mtime, tz=timezone.utc)
+    library_start, library_end = _library_span()
     return {
         "available": True,
         "snapshot_id": modified.strftime("%Y%m%dT%H%M%SZ"),
         "file_mtime_utc": modified.isoformat(),
+        "library_start": library_start,
+        "library_end": library_end,
         "stale_flag_note": "series_meta.stale 在建库时写入。部署后的静态数据库不会按来源日历自动改写这个标记。",
         "refresh_note": "定期拉取尚未实现。在数据再分发许可确认前，不把自动更新写进生产任务。",
     }
+
+
+def _library_span() -> tuple[str | None, str | None]:
+    """Full stored observation span. This is not the span visible at an as_of."""
+    from quantrisklab.store.database import connect_readonly
+
+    connection = connect_readonly()
+    try:
+        row = connection.execute(
+            "SELECT MIN(observation_date), MAX(observation_date) FROM observations WHERE value IS NOT NULL"
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        return None, None
+    return _span_day(row[0]), _span_day(row[1])
+
+
+def _span_day(value) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "date") and not isinstance(value, date):
+        value = value.date()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)[:10]
